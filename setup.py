@@ -159,7 +159,7 @@ def print_next_steps():
     print()
 
     print(f"  {BOLD}4. Start a simulation:{RESET}")
-    print(f"     Go to the Simulator page → pick Scenario A → click Start")
+    print(f"     Go to the Simulator page -> pick Scenario A -> click Start")
     print(f"     Watch inventory change, agent reason, and transfers get proposed")
     print()
 

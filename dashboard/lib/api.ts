@@ -22,12 +22,15 @@ import {
   AgentAnalysis,
 } from "./types";
 
-// Auto-detect: if env var is set, use it. Otherwise, use the same host
-// as the frontend but on port 8000 — so when a judge opens the dashboard
-// on another laptop via http://192.168.x.x:3000, the API calls and
-// WebSocket automatically point to that same host's backend.
+// Auto-detect the backend host at runtime.
+// If NEXT_PUBLIC_API_URL is set AND differs from localhost, use it.
+// Otherwise, use the same hostname as the frontend but on port 8000.
+// This lets judges open http://192.168.x.x:3000 and the API/WebSocket
+// automatically point to http://192.168.x.x:8000.
 function getApiBase(): string {
-  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  // Always derive from the browser's location so that when someone
+  // opens the dashboard on another laptop via the host's LAN IP,
+  // API calls go to that same host — not localhost.
   if (typeof window !== "undefined") {
     return `${window.location.protocol}//${window.location.hostname}:8000`;
   }
