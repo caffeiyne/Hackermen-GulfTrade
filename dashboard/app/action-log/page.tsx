@@ -13,6 +13,7 @@ import {
   Truck,
   Clock,
   Filter,
+  RotateCcw,
 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -70,10 +71,10 @@ export default function ActionLogPage() {
     return () => clearInterval(interval);
   }, [loadData]);
 
-  // Only show transfers that have been actioned (approved/completed/rejected)
+  // Only show transfers that have been actioned (approved/completed/rejected/cancelled)
   const actionedTransfers = useMemo(() => {
     return transfers
-      .filter((t) => ["completed", "approved", "rejected"].includes(t.status))
+      .filter((t) => ["completed", "approved", "rejected", "cancelled"].includes(t.status))
       .filter((t) => statusFilter === "all" || t.status === statusFilter)
       .sort((a, b) => {
         const da = new Date(a.updated_at || a.created_at || 0).getTime();
@@ -99,11 +100,13 @@ export default function ActionLogPage() {
   const stats = useMemo(() => {
     const completed = transfers.filter((t) => t.status === "completed");
     const rejected = transfers.filter((t) => t.status === "rejected");
+    const cancelled = transfers.filter((t) => t.status === "cancelled");
     const totalUnitsMoved = completed.reduce((sum, t) => sum + t.quantity, 0);
     const totalNetBenefit = completed.reduce((sum, t) => sum + Number(t.net_benefit || 0), 0);
     return {
       completed: completed.length,
       rejected: rejected.length,
+      cancelled: cancelled.length,
       totalUnitsMoved,
       totalNetBenefit,
     };
@@ -184,7 +187,7 @@ export default function ActionLogPage() {
       {/* Filter bar */}
       <div className="flex items-center gap-2">
         <Filter className="w-4 h-4 text-buddy-muted" />
-        {["all", "completed", "rejected"].map((f) => (
+        {["all", "completed", "rejected", "cancelled"].map((f) => (
           <button
             key={f}
             onClick={() => setStatusFilter(f)}
@@ -205,6 +208,7 @@ export default function ActionLogPage() {
           {entries.map((entry, i) => {
             const { transfer, fromStock, toStock } = entry;
             const isApproved = transfer.status === "completed" || transfer.status === "approved";
+            const isCancelled = transfer.status === "cancelled";
             const isExpanded = expandedId === transfer.transfer_id;
             const fromColor = WH_COLORS[transfer.from_warehouse] || "#6b7280";
             const toColor = WH_COLORS[transfer.to_warehouse] || "#6b7280";
@@ -234,11 +238,15 @@ export default function ActionLogPage() {
                       <div className="flex items-center gap-4">
                         {/* Status icon */}
                         <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                          isApproved
+                          isCancelled
+                            ? "bg-yellow-950/60 border border-yellow-900"
+                            : isApproved
                             ? "bg-green-950/60 border border-green-900"
                             : "bg-red-950/60 border border-red-900"
                         }`}>
-                          {isApproved ? (
+                          {isCancelled ? (
+                            <RotateCcw className="w-5 h-5 text-yellow-400" />
+                          ) : isApproved ? (
                             <CheckCircle2 className="w-5 h-5 text-green-400" />
                           ) : (
                             <XCircle className="w-5 h-5 text-red-400" />
@@ -251,7 +259,7 @@ export default function ActionLogPage() {
                             <p className="font-mono text-sm font-medium text-buddy-text">{transfer.from_warehouse}</p>
                             <p className="text-xs text-buddy-muted">From</p>
                           </div>
-                          <ArrowRight className={`w-5 h-5 ${isApproved ? "text-tradeling-400" : "text-red-400"}`} />
+                          <ArrowRight className={`w-5 h-5 ${isCancelled ? "text-yellow-400" : isApproved ? "text-tradeling-400" : "text-red-400"}`} />
                           <div className="text-center">
                             <p className="font-mono text-sm font-medium text-buddy-text">{transfer.to_warehouse}</p>
                             <p className="text-xs text-buddy-muted">To</p>
@@ -275,7 +283,7 @@ export default function ActionLogPage() {
                             <p className="text-xs text-buddy-muted">by {transfer.approved_by}</p>
                           )}
                         </div>
-                        <Badge variant={isApproved ? "success" : "danger"}>
+                        <Badge variant={isCancelled ? "warning" : isApproved ? "success" : "danger"}>
                           {transfer.status}
                         </Badge>
                       </div>

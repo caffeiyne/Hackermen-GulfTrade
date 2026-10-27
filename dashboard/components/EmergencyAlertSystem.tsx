@@ -61,19 +61,35 @@ export function EmergencyAlertSystem() {
   const [activeAlerts, setActiveAlerts] = useState<ActiveAlert[]>([]);
   const [toasts, setToasts] = useState<ActiveAlert[]>([]);
   const dismissedRef = useRef<Set<string>>(new Set());
+  // Track recently seen disruption titles to prevent duplicate toasts
+  // from multiple WS events for the same disruption (e.g. injected + published)
+  const recentTitlesRef = useRef<Set<string>>(new Set());
 
   // Listen to WS events for disruption injections/publications
   const handleEvent = useCallback((event: WSEvent) => {
     if (event.type === "disruption_injected" || event.type === "disruption_published") {
       const data = event.data as Record<string, any>;
-      const alertId = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const severity = (data.severity as string) || "high";
+      const title = data.title || "Unknown Disruption";
+
+      // Deduplicate: skip if we've seen this disruption title in the last 5 seconds
+      // This prevents duplicate toasts when both "disruption_injected" and
+      // "disruption_published" fire for the same logical event, or when the
+      // WS reconnects and replays events.
+      const dedupeKey = title;
+      if (recentTitlesRef.current.has(dedupeKey)) {
+        return;
+      }
+      recentTitlesRef.current.add(dedupeKey);
+      setTimeout(() => recentTitlesRef.current.delete(dedupeKey), 5000);
+
+      const alertId = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       const alert: ActiveAlert = {
         alertId,
         disruption_id: data.disruption_id,
         disruption_type: (data.type as "supply_shortage" | "shipping_delay") || "supply_shortage",
-        title: data.title || "Unknown Disruption",
+        title,
         description: data.description || null,
         affected_skus: data.affected_skus || [],
         affected_routes: data.affected_routes || null,
@@ -85,13 +101,21 @@ export function EmergencyAlertSystem() {
         triggeredAt: Date.now(),
       };
 
-      // Add to persistent banner list (only high/medium)
+      // Add to persistent banner list (only high/medium) — deduplicated by title
       if (severity === "high" || severity === "medium") {
-        setActiveAlerts((prev) => [alert, ...prev].slice(0, 5));
+        setActiveAlerts((prev) => {
+          const exists = prev.some(
+            (a) => a.title === alert.title || (alert.disruption_id && a.disruption_id === alert.disruption_id)
+          );
+          return exists ? prev : [alert, ...prev].slice(0, 5);
+        });
       }
 
-      // Always add a toast notification
-      setToasts((prev) => [alert, ...prev].slice(0, 3));
+      // Add a toast notification — deduplicated by title
+      setToasts((prev) => {
+        const exists = prev.some((t) => t.title === alert.title);
+        return exists ? prev : [alert, ...prev].slice(0, 3);
+      });
     }
   }, []);
 
@@ -159,7 +183,7 @@ export function EmergencyAlertSystem() {
             transition={{ duration: 0.3 }}
             className="overflow-hidden border-b border-buddy-border bg-buddy-surface/60"
           >
-            <div className="px-6 py-2 space-y-2">
+            <div className="px-3 py-2 sm:px-6 space-y-2">
               <AnimatePresence>
                 {activeAlerts.map((alert) => {
                   const Icon = getDisruptionIcon(alert.title);
@@ -233,7 +257,7 @@ export function EmergencyAlertSystem() {
       </AnimatePresence>
 
       {/* Toast Notifications — slide in from bottom-right */}
-      <div className="fixed bottom-6 right-6 z-50 space-y-3 pointer-events-none">
+      <div className="fixed bottom-3 right-3 sm:bottom-6 sm:right-6 z-50 space-y-3 pointer-events-none w-[calc(100vw-1.5rem)] sm:w-auto max-w-sm">
         <AnimatePresence>
           {toasts.map((toast) => {
             const Icon = getDisruptionIcon(toast.title);
@@ -245,7 +269,7 @@ export function EmergencyAlertSystem() {
                 animate={{ opacity: 1, x: 0, scale: 1 }}
                 exit={{ opacity: 0, x: 100, scale: 0.9 }}
                 transition={{ type: "spring", stiffness: 300, damping: 25 }}
-                className={`pointer-events-auto w-80 rounded-xl border ${cfg.bg} ${cfg.border} shadow-2xl backdrop-blur-xl p-4`}
+                className={`pointer-events-auto w-full rounded-xl border ${cfg.bg} ${cfg.border} shadow-2xl backdrop-blur-xl p-4`}
               >
                 {/* Header */}
                 <div className="flex items-start justify-between gap-3 mb-2">

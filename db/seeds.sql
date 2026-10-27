@@ -147,7 +147,11 @@ SELECT
     END AS inbound_qty
 FROM master.skus s
 CROSS JOIN master.warehouses w
-ON CONFLICT (sku_id, warehouse_id) DO NOTHING;
+ON CONFLICT (sku_id, warehouse_id) DO UPDATE
+SET available_qty = EXCLUDED.available_qty,
+    reserved_qty  = EXCLUDED.reserved_qty,
+    safety_stock  = EXCLUDED.safety_stock,
+    inbound_qty   = EXCLUDED.inbound_qty;
 
 -- ============================================================================
 -- inventory.stock_age — Age buckets per SKU/warehouse

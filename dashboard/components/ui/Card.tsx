@@ -18,7 +18,7 @@ export function Card({ children, className, hover = false, delay = 0 }: CardProp
       transition={{ duration: 0.4, delay, ease: "easeOut" }}
       whileHover={hover ? { y: -2, transition: { duration: 0.2 } } : undefined}
       className={cn(
-        "rounded-xl border border-buddy-border bg-buddy-surface p-5",
+        "rounded-xl border border-buddy-border bg-buddy-surface p-4 sm:p-5",
         hover && "hover:border-tradeling-800 transition-colors cursor-pointer",
         className
       )}

@@ -1,9 +1,8 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import dynamic from "next/dynamic";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
-import { Sidebar } from "@/components/layout/Sidebar";
-import { TopBar } from "@/components/layout/TopBar";
+import { Shell } from "@/components/layout/Shell";
 
 // Client-only: the emergency alert system uses WebSocket + browser APIs,
 // so we skip SSR to avoid "useContext is null" during server rendering.
@@ -20,6 +19,12 @@ export const metadata: Metadata = {
   description: "AI-based demand planning and stock distribution agent for B2B inventory management",
 };
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+};
+
 export default function RootLayout({
   children,
 }: {
@@ -28,16 +33,10 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className={`${inter.variable} ${jetbrains.variable} font-sans`}>
-        <div className="flex h-screen overflow-hidden">
-          <Sidebar />
-          <div className="flex flex-1 flex-col overflow-hidden">
-            <TopBar />
-            <EmergencyAlertSystem />
-            <main className="flex-1 overflow-y-auto p-6">
-              {children}
-            </main>
-          </div>
-        </div>
+        <Shell>
+          <EmergencyAlertSystem />
+          {children}
+        </Shell>
       </body>
     </html>
   );

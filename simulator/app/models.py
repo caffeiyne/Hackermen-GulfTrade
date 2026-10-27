@@ -143,6 +143,15 @@ class TransferDecision(BaseModel):
     rejection_reason: Optional[str] = None
 
 
+class ManualTransferRequest(BaseModel):
+    """Body for creating and executing a manual stock transfer in one step."""
+    sku_id: str
+    from_warehouse: str
+    to_warehouse: str
+    quantity: int = Field(gt=0, description="Number of units to transfer")
+    approved_by: str = Field(default="Sara", description="Who authorized the transfer")
+
+
 # ---------------------------------------------------------------------------
 # Disruptions
 # ---------------------------------------------------------------------------

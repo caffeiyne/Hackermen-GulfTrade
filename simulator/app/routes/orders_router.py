@@ -10,7 +10,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException
 
 from app.db import get_conn, notify_event
-from app.models import InboundOrder, TransferProposal, TransferDecision
+from app.models import InboundOrder, TransferProposal, TransferDecision, ManualTransferRequest
 
 orders_router = APIRouter()
 
@@ -373,5 +373,279 @@ async def reject_recommendation(recommendation_id: str, decision: TransferDecisi
         "from_warehouse": from_wh,
         "to_warehouse": to_wh,
         "message": f"Transfer rejected: {decision.rejection_reason or 'No reason given'}",
+    }
+
+
+@orders_router.post("/transfers/manual")
+async def create_manual_transfer(req: ManualTransferRequest):
+    """
+    Create and immediately execute a manual stock transfer.
+
+    The planner (Sara) picks a SKU, source warehouse, destination warehouse,
+    and quantity. The system:
+      1. Validates source ≠ destination and source has enough stock
+      2. Looks up transfer cost + lead time from the transfer matrix
+      3. Creates a transfer record (status = approved)
+      4. Moves stock from source → destination
+      5. Marks the transfer as completed
+      6. Emits audit events + WebSocket notifications
+    """
+    if req.from_warehouse == req.to_warehouse:
+        raise HTTPException(status_code=400, detail="Source and destination must be different")
+
+    async with get_conn() as conn:
+        # Check source has enough stock
+        source_stock = await conn.fetchrow(
+            """
+            SELECT available_qty, reserved_qty, safety_stock
+            FROM inventory.stock_levels
+            WHERE sku_id = $1 AND warehouse_id = $2
+            """,
+            req.sku_id, req.from_warehouse,
+        )
+        if not source_stock:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No stock record for {req.sku_id} at {req.from_warehouse}",
+            )
+
+        available = source_stock["available_qty"]
+        if req.quantity > available:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Insufficient stock: requested {req.quantity}, available {available} at {req.from_warehouse}",
+            )
+
+        # Look up transfer cost + lead time from the transfer matrix
+        route = await conn.fetchrow(
+            """
+            SELECT cost_per_unit, lead_time_days
+            FROM master.transfer_matrix
+            WHERE from_warehouse = $1 AND to_warehouse = $2 AND active = TRUE
+            """,
+            req.from_warehouse, req.to_warehouse,
+        )
+
+        transfer_cost = route["cost_per_unit"] * req.quantity if route else 0
+        lead_time_days = route["lead_time_days"] if route else 1
+
+        # Create the transfer record (status = approved)
+        transfer = await conn.fetchrow(
+            """
+            INSERT INTO orders.transfers
+                (sku_id, from_warehouse, to_warehouse, quantity,
+                 transfer_cost, lead_time_days, reason, status, approved_by, approved_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'approved', $8, now())
+            RETURNING *
+            """,
+            req.sku_id, req.from_warehouse, req.to_warehouse, req.quantity,
+            transfer_cost, lead_time_days,
+            f"Manual transfer by {req.approved_by}",
+            req.approved_by,
+        )
+
+        transfer_id = transfer["transfer_id"]
+        qty = req.quantity
+
+        # --- Execute the stock movement ---
+        # Reduce source
+        await conn.execute(
+            """
+            UPDATE inventory.stock_levels
+            SET available_qty = GREATEST(0, available_qty - $1),
+                updated_at = now()
+            WHERE sku_id = $2 AND warehouse_id = $3
+            """,
+            qty, req.sku_id, req.from_warehouse,
+        )
+
+        # Increase destination
+        await conn.execute(
+            """
+            INSERT INTO inventory.stock_levels
+                (sku_id, warehouse_id, available_qty, reserved_qty, safety_stock, inbound_qty)
+            VALUES ($1, $2, $3, 0, 0, 0)
+            ON CONFLICT (sku_id, warehouse_id)
+            DO UPDATE SET available_qty = inventory.stock_levels.available_qty + $3,
+                          updated_at = now()
+            """,
+            req.sku_id, req.to_warehouse, qty,
+        )
+
+        # Mark transfer as completed
+        await conn.execute(
+            """
+            UPDATE orders.transfers
+            SET status = 'completed', updated_at = now()
+            WHERE transfer_id = $1
+            """,
+            transfer_id,
+        )
+
+        # Audit log — approved
+        await conn.execute(
+            """
+            INSERT INTO events.audit_log (event_type, event_data, sim_timestamp)
+            VALUES ('transfer_approved', $1, $2)
+            """,
+            json.dumps({
+                "transfer_id": str(transfer_id),
+                "sku_id": req.sku_id,
+                "from_warehouse": req.from_warehouse,
+                "to_warehouse": req.to_warehouse,
+                "quantity": qty,
+                "approved_by": req.approved_by,
+                "source": "manual",
+            }),
+            date.today(),
+        )
+
+        # Audit log — completed
+        await conn.execute(
+            """
+            INSERT INTO events.audit_log (event_type, event_data, sim_timestamp)
+            VALUES ('transfer_completed', $1, $2)
+            """,
+            json.dumps({
+                "transfer_id": str(transfer_id),
+                "sku_id": req.sku_id,
+                "from_warehouse": req.from_warehouse,
+                "to_warehouse": req.to_warehouse,
+                "quantity": qty,
+                "source": "manual",
+            }),
+            date.today(),
+        )
+
+    # Notify via WebSocket
+    await notify_event("transfer_approved", {
+        "transfer_id": str(transfer_id),
+        "sku_id": req.sku_id,
+        "from_warehouse": req.from_warehouse,
+        "to_warehouse": req.to_warehouse,
+        "quantity": qty,
+        "approved_by": req.approved_by,
+        "source": "manual",
+    })
+
+    await notify_event("transfer_completed", {
+        "transfer_id": str(transfer_id),
+        "sku_id": req.sku_id,
+        "from_warehouse": req.from_warehouse,
+        "to_warehouse": req.to_warehouse,
+        "quantity": qty,
+        "source": "manual",
+    })
+
+    return {
+        "status": "completed",
+        "transfer_id": str(transfer_id),
+        "sku_id": req.sku_id,
+        "from_warehouse": req.from_warehouse,
+        "to_warehouse": req.to_warehouse,
+        "quantity_moved": qty,
+        "transfer_cost": float(transfer_cost),
+        "lead_time_days": lead_time_days,
+        "message": f"Manual transfer executed: {qty} units of {req.sku_id} moved from {req.from_warehouse} to {req.to_warehouse}",
+    }
+
+
+@orders_router.post("/transfers/{transfer_id}/cancel")
+async def cancel_transfer(transfer_id: UUID):
+    """
+    Cancel / reverse a completed transfer — moves stock back from
+    destination to source and marks the transfer as 'cancelled'.
+
+    This allows the planner to undo an action they regret approving.
+    Only transfers with status 'completed' can be cancelled.
+    """
+    async with get_conn() as conn:
+        transfer = await conn.fetchrow(
+            "SELECT * FROM orders.transfers WHERE transfer_id = $1",
+            transfer_id,
+        )
+        if not transfer:
+            raise HTTPException(status_code=404, detail="Transfer not found")
+
+        if transfer["status"] != "completed":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot cancel transfer with status '{transfer['status']}'. Only completed transfers can be cancelled.",
+            )
+
+        sku_id = transfer["sku_id"]
+        from_wh = transfer["from_warehouse"]
+        to_wh = transfer["to_warehouse"]
+        qty = transfer["quantity"]
+
+        # --- Reverse the stock movement ---
+        # Move stock back: destination → source
+        # Reduce destination
+        await conn.execute(
+            """
+            UPDATE inventory.stock_levels
+            SET available_qty = GREATEST(0, available_qty - $1),
+                updated_at = now()
+            WHERE sku_id = $2 AND warehouse_id = $3
+            """,
+            qty, sku_id, to_wh,
+        )
+
+        # Increase source
+        await conn.execute(
+            """
+            INSERT INTO inventory.stock_levels
+                (sku_id, warehouse_id, available_qty, reserved_qty, safety_stock, inbound_qty)
+            VALUES ($1, $2, $3, 0, 0, 0)
+            ON CONFLICT (sku_id, warehouse_id)
+            DO UPDATE SET available_qty = inventory.stock_levels.available_qty + $3,
+                          updated_at = now()
+            """,
+            sku_id, from_wh, qty,
+        )
+
+        # Mark transfer as cancelled
+        await conn.execute(
+            """
+            UPDATE orders.transfers
+            SET status = 'cancelled', updated_at = now()
+            WHERE transfer_id = $1
+            """,
+            transfer_id,
+        )
+
+        # Audit log — cancelled
+        await conn.execute(
+            """
+            INSERT INTO events.audit_log (event_type, event_data, sim_timestamp)
+            VALUES ('transfer_cancelled', $1, $2)
+            """,
+            json.dumps({
+                "transfer_id": str(transfer_id),
+                "sku_id": sku_id,
+                "from_warehouse": from_wh,
+                "to_warehouse": to_wh,
+                "quantity": qty,
+                "cancelled_by": "planner",
+            }),
+            date.today(),
+        )
+
+    await notify_event("transfer_cancelled", {
+        "transfer_id": str(transfer_id),
+        "sku_id": sku_id,
+        "from_warehouse": from_wh,
+        "to_warehouse": to_wh,
+        "quantity": qty,
+    })
+
+    return {
+        "status": "cancelled",
+        "transfer_id": str(transfer_id),
+        "sku_id": sku_id,
+        "from_warehouse": from_wh,
+        "to_warehouse": to_wh,
+        "quantity_returned": qty,
+        "message": f"Transfer cancelled: {qty} units of {sku_id} returned from {to_wh} to {from_wh}",
     }
 

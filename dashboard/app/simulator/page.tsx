@@ -186,8 +186,14 @@ export default function SimulatorPage() {
   };
 
   const handleReset = async () => {
-    await api.resetSimulator();
-    await loadStatus();
+    if (!confirm("This will clear ALL simulation data and restore initial stock levels.\n\nContinue?")) return;
+    setLoading(true);
+    try {
+      await api.resetSimulator();
+      await loadStatus();
+    } finally {
+      setLoading(false);
+    }
   };
 
   // --- One-click Black Swan injection ---
@@ -260,8 +266,8 @@ export default function SimulatorPage() {
 
       {/* Simulator status banner */}
       <Card>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-6">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3 sm:gap-6 flex-wrap">
             <div className="flex items-center gap-3">
               <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
                 isRunning ? "bg-tradeling-950/60 border border-tradeling-800" :
@@ -324,9 +330,14 @@ export default function SimulatorPage() {
               </p>
             </div>
           </div>
-          <Button onClick={handleQuickStart} disabled={loading} size="md">
-            <Zap className="w-4 h-4" /> Quick-Start Demo
-          </Button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button onClick={handleQuickStart} disabled={loading} size="md">
+              <Zap className="w-4 h-4" /> Quick-Start Demo
+            </Button>
+            <Button onClick={handleReset} variant="secondary" size="sm" disabled={loading}>
+              <RotateCcw className="w-3.5 h-3.5" /> {loading ? "Resetting..." : "Reset Demo Data"}
+            </Button>
+          </div>
         </motion.div>
       )}
 
@@ -400,8 +411,13 @@ export default function SimulatorPage() {
               </Button>
             )}
             {(isRunning || isPaused) && (
-              <Button onClick={handleReset} variant="danger" size="md">
-                <RotateCcw className="w-4 h-4" /> Reset
+              <Button onClick={handleReset} variant="danger" size="md" disabled={loading}>
+                <RotateCcw className="w-4 h-4" /> {loading ? "Resetting..." : "Reset"}
+              </Button>
+            )}
+            {!isRunning && !isPaused && (
+              <Button onClick={handleReset} variant="secondary" size="sm" disabled={loading}>
+                <RotateCcw className="w-3.5 h-3.5" /> {loading ? "Resetting..." : "Reset Demo Data"}
               </Button>
             )}
           </div>
@@ -566,7 +582,7 @@ export default function SimulatorPage() {
                   </button>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs text-buddy-muted block mb-1">Type</label>
                     <select

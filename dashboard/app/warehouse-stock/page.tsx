@@ -74,7 +74,7 @@ function DarkTooltip({ active, payload, label }: any) {
   );
 }
 
-type SortKey = "available" | "reserved" | "safety" | "inbound" | "total" | "sku";
+type SortKey = "available" | "reserved" | "safety" | "inbound" | "total" | "sku_id";
 
 export default function WarehouseStockPage() {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -198,7 +198,12 @@ export default function WarehouseStockPage() {
       })
       .sort((a, b) => {
         const dir = sortDesc ? -1 : 1;
-        return dir * (a[sortBy] - b[sortBy]);
+        const av = (a as Record<string, unknown>)[sortBy];
+        const bv = (b as Record<string, unknown>)[sortBy];
+        if (typeof av === "string" || typeof bv === "string") {
+          return dir * String(av).localeCompare(String(bv));
+        }
+        return dir * (Number(av) - Number(bv));
       });
   }, [selectedWarehouse, stockLevels, skuMap, salesSummary, searchQuery, sortBy, sortDesc, productFilter]);
 
@@ -582,7 +587,7 @@ export default function WarehouseStockPage() {
                   </div>
                   <p className="text-xs text-buddy-muted mt-2">
                     {warehouseSkuDetail.length} SKU{warehouseSkuDetail.length !== 1 ? "s" : ""} shown
-                    {sortBy !== "sku" && ` · sorted by ${sortBy} (${sortDesc ? "desc" : "asc"})`}
+                    {sortBy !== "sku_id" && ` · sorted by ${sortBy} (${sortDesc ? "desc" : "asc"})`}
                   </p>
                 </div>
               </div>

@@ -145,6 +145,22 @@ export const api = {
       body: JSON.stringify({ approved_by: approvedBy, rejection_reason: rejectionReason }),
     }),
 
+  createManualTransfer: (data: {
+    sku_id: string;
+    from_warehouse: string;
+    to_warehouse: string;
+    quantity: number;
+  }) =>
+    fetchAPI(`/api/orders/transfers/manual`, {
+      method: "POST",
+      body: JSON.stringify({ ...data, approved_by: "Sara" }),
+    }),
+
+  cancelTransfer: (transferId: string) =>
+    fetchAPI(`/api/orders/transfers/${transferId}/cancel`, {
+      method: "POST",
+    }),
+
   // --- Disruptions ---
   getDisruptions: (activeOnly?: boolean) =>
     fetchAPI<Disruption[]>(`/api/disruptions${activeOnly ? "?active_only=true" : ""}`),

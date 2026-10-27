@@ -90,7 +90,7 @@ export function EventRow({
             exit={{ opacity: 0, height: 0 }}
             className="overflow-hidden"
           >
-            <div className={`grid grid-cols-2 gap-x-4 gap-y-1.5 mt-2.5 pt-2.5 border-t border-buddy-border`}>
+            <div className={`grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 mt-2.5 pt-2.5 border-t border-buddy-border`}>
               {fmt.fields.map((field, i) => (
                 <div key={i} className="min-w-0">
                   <span className="text-[10px] text-buddy-muted uppercase tracking-wide block">

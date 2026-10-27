@@ -31,13 +31,13 @@ const navItems = [
   { href: "/simulator", label: "Simulator", icon: PlayCircle },
 ];
 
-export function Sidebar() {
+export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
 
   return (
-    <aside className="w-60 shrink-0 border-r border-buddy-border bg-buddy-surface flex flex-col">
+    <aside className="w-60 shrink-0 border-r border-buddy-border bg-buddy-surface flex flex-col h-full">
       {/* Logo */}
-      <div className="flex items-center gap-3 px-5 h-16 border-b border-buddy-border">
+      <div className="flex items-center gap-3 px-5 h-16 border-b border-buddy-border shrink-0">
         <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-tradeling-400 to-tradeling-600 flex items-center justify-center">
           <Package className="w-5 h-5 text-white" />
         </div>
@@ -48,7 +48,7 @@ export function Sidebar() {
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 px-3 py-4 space-y-1">
+      <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
         {navItems.map((item) => {
           const active = pathname === item.href;
           const Icon = item.icon;
@@ -56,6 +56,7 @@ export function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
+              onClick={onNavigate}
               className={cn(
                 "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors relative",
                 active

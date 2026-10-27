@@ -134,7 +134,7 @@ export default function ImbalancesPage() {
                 </div>
 
                 {/* Stats row */}
-                <div className="grid grid-cols-4 gap-2 text-xs mb-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs mb-3">
                   <div className="p-2 rounded-lg bg-buddy-bg">
                     <p className="text-buddy-muted">Current</p>
                     <p className="font-medium text-buddy-text">{formatNumber(flag.current_qty)}</p>

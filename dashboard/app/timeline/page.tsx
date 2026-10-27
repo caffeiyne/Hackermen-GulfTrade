@@ -133,7 +133,7 @@ export default function TimelinePage() {
       </div>
 
       {/* Stats row */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Card>
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg bg-tradeling-950/40 border border-tradeling-800 flex items-center justify-center">

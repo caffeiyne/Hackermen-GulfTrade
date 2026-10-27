@@ -65,8 +65,8 @@ export function formatEvent(
         title: "Sale Recorded",
         subtitle: `${safeStr(d.sku_id)} · ${safeStr(d.warehouse_id)}`,
         badges: [
-          { label: `${qty ?? "—"} units`, color: "green" },
-          ...(value !== null ? [{ label: formatAED(value), color: "gray" }] : []),
+          { label: `${qty ?? "—"} units`, color: "green" as EventBadge["color"] },
+          ...(value !== null ? [{ label: formatAED(value), color: "gray" as EventBadge["color"] }] : []),
         ],
         fields: [
           { label: "SKU", value: safeStr(d.sku_id) },
@@ -106,8 +106,8 @@ export function formatEvent(
         badges: [
           { label: severity.toUpperCase(), color: severityColor },
           { label: safeStr(d.type || d.disruption_type), color: "purple" },
-          ...(skus.length > 0 ? [{ label: `${skus.length} SKUs`, color: "gray" }] : []),
-          ...(routes.length > 0 ? [{ label: `${routes.length} routes`, color: "gray" }] : []),
+          ...(skus.length > 0 ? [{ label: `${skus.length} SKUs`, color: "gray" as EventBadge["color"] }] : []),
+          ...(routes.length > 0 ? [{ label: `${routes.length} routes`, color: "gray" as EventBadge["color"] }] : []),
         ],
         fields: [
           { label: "Title", value: safeStr(d.title) },
@@ -136,7 +136,7 @@ export function formatEvent(
           { label: `${getNum(summary.imbalances_found) ?? 0} findings`, color: "amber" },
           { label: `${feasibleCount} actions`, color: feasibleCount > 0 ? "green" : "gray" },
           ...(getNum(summary.disruptions_active) ?? 0 > 0
-            ? [{ label: "Disruption active", color: "red" }]
+            ? [{ label: "Disruption active", color: "red" as EventBadge["color"] }]
             : []),
         ],
         fields: [
@@ -227,7 +227,7 @@ export function formatEvent(
         subtitle: `${safeStr(d.sku_id)} · ${safeStr(d.from_warehouse || d.from)}→${safeStr(d.to_warehouse || d.to)}`,
         badges: [
           { label: status, color: colorMap[eventType] || "gray" },
-          ...(d.quantity ? [{ label: `${safeStr(d.quantity)} units`, color: "gray" }] : []),
+          ...(d.quantity ? [{ label: `${safeStr(d.quantity)} units`, color: "gray" as EventBadge["color"] }] : []),
         ],
         fields: [
           { label: "SKU", value: safeStr(d.sku_id) },
