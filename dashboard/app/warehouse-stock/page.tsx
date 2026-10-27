@@ -291,7 +291,7 @@ export default function WarehouseStockPage() {
               {warehouseStockData.map((entry, i) => (
                 <Cell
                   key={i}
-                  fill={selectedWarehouse === entry.warehouse ? "#22d3ee" : undefined}
+                  fill={selectedWarehouse === entry.warehouse ? "#22d3ee" : "#f59e0b"}
                 />
               ))}
             </Bar>
