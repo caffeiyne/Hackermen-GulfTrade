@@ -69,6 +69,9 @@ They open it in any browser. The dashboard auto-connects to your backend — **A
 - See the agent reasoning in real time
 - Watch emergency alerts fire when you inject black swan events
 - Approve/reject transfer recommendations
+- **Cancel an approved transfer** — reverse a stock movement with one click if Sara changes her mind
+- **Reset demo data** — one-click button on the Simulator page to restore all stock levels and clear sim history
+- **Open on mobile/iPad** — the dashboard is fully responsive with a collapsible sidebar
 
 > **Tip:** Use the **Quick-Start Demo** button on the Simulator page — it starts Scenario B at 4x speed so disruptions fire within ~2 minutes.
 
@@ -263,13 +266,21 @@ Try other black swans:
 
 ### 7. Try Scenario B (the difficult case)
 
-Reset the simulator, then start **Scenario B**:
+Reset the simulator (or use the **Reset Demo Data** button for a full DB reset), then start **Scenario B**:
 - Same imbalance exists, but two disruptions fire on schedule:
   - Day 9: Semiconductor supply constraint (CHG-UC-002, CHG-UC-003)
   - Day 14: DXB-SHJ shipping route delay
 - The agent must NOT assume all products are affected
 - The agent must reject the DXB→SHJ transfer (route disrupted + uneconomical)
 - Watch the rejected recommendations appear with explanations
+
+### 8. Cancel an Approved Transfer
+
+Go to the **Actions** page:
+- Approve a transfer recommendation
+- On the executed action card, click **Cancel Transfer**
+- The stock movement is reversed immediately — units return to the source warehouse
+- The transfer shows a **Cancelled** badge (yellow) in the Action Summary
 
 ### Key Demo Points to Highlight
 
@@ -282,9 +293,13 @@ Reset the simulator, then start **Scenario B**:
 | Constraints checked per recommendation | Actions page | Traceable, evidence-based |
 | Before/after impact in AED | Actions page | Quantified business benefit |
 | Black swan → agent reacts in seconds | Simulator + Overview | Real-time agentic response |
+| Emergency alert toast | Top of screen (all pages) | Disruption notification fires exactly once |
 | Route disrupted badge | Actions page | Disruption-aware recommendations |
 | Rejected recommendations with reasons | Agent panel | Doesn't just recommend everything |
 | Human approval required | Actions page | Trust boundary — no autonomous execution |
+| Cancel transfer (reverse stock movement) | Actions page | Human can undo — not irreversible |
+| Reset demo data (one click) | Simulator page | Clean state for re-demo or judge retry |
+| Mobile/iPad responsive view | Open URL on phone | Works on any device judges bring |
 
 ---
 
@@ -296,8 +311,9 @@ tradling-logistics/
 │
 ├── db/                     # PostgreSQL schema + seed data
 │   ├── schema.sql          # 5 schemas with LISTEN/NOTIFY triggers
-│   ├── seeds.sql           # 20 SKUs, 3 warehouses, transfer matrix
+│   ├── seeds.sql           # 20 SKUs, 3 warehouses, transfer matrix (re-seedable)
 │   ├── disruptions.sql     # 2 labelled disruption scenarios
+│   ├── reset_demo.sql      # One-click reset: truncate sim data + restore stock levels
 │   └── generate_sales.py   # 90-day sales history generator
 │
 ├── simulator/              # FastAPI backend
@@ -305,7 +321,7 @@ tradling-logistics/
 │       ├── main.py         # FastAPI app + WebSocket endpoint
 │       ├── db.py           # asyncpg pool + LISTEN/NOTIFY bridge
 │       ├── config.py       # Pydantic settings (reads .env)
-│       ├── models.py       # Pydantic request models
+│       ├── models.py       # Pydantic request models (includes cancel transfer)
 │       ├── routes/         # REST API routes (7 routers)
 │       ├── ai/             # The agent + its tools
 │       │   ├── agent.py    # Autonomous reasoning agent (observe→reason→plan→explain→act)
@@ -318,21 +334,26 @@ tradling-logistics/
 │
 ├── dashboard/              # Next.js 14 frontend
 │   ├── lib/
-│   │   ├── api.ts          # API client (all endpoints)
+│   │   ├── api.ts          # API client (all endpoints incl. cancel + reset)
 │   │   ├── types.ts        # TypeScript types mirroring backend
 │   │   └── useRealTime.ts  # WebSocket hook for live events
 │   ├── components/
 │   │   ├── AgentPanel.tsx  # Live agent reasoning display
+│   │   ├── EmergencyAlertSystem.tsx  # Black swan toast notifications
 │   │   ├── UAEMap.tsx     # Warehouse map visualization
+│   │   ├── layout/
+│   │   │   ├── Shell.tsx   # Responsive shell + collapsible sidebar (mobile/iPad)
+│   │   │   ├── Sidebar.tsx # Navigation sidebar
+│   │   │   └── TopBar.tsx  # Top bar with live clock + status
 │   │   └── ui/             # Reusable UI components
 │   └── app/
 │       ├── page.tsx        # Overview (KPIs + agent panel)
 │       ├── dashboard/      # Inventory map + warehouse breakdown
 │       ├── forecast/       # 30-day demand forecasts
 │       ├── imbalances/     # Flagged shortages/excess/ageing
-│       ├── actions/        # Recommendations + approve/reject + impact
+│       ├── actions/        # Recommendations + approve/reject/cancel + impact
 │       ├── timeline/       # Real-time event feed
-│       └── simulator/      # Scenario controls + Black Swan injection panel
+│       └── simulator/      # Scenario controls + Black Swan + Reset Demo Data
 │
 ├── docker-compose.yml      # All services (optional)
 └── .env.example            # Environment template
@@ -392,6 +413,7 @@ tradling-logistics/
 | GET | `/api/orders/transfers` | Transfer proposals |
 | POST | `/api/orders/transfers/{id}/approve` | Approve transfer (Sara) |
 | POST | `/api/orders/transfers/{id}/reject` | Reject transfer |
+| POST | `/api/orders/transfers/{id}/cancel` | Cancel an approved transfer (reverses stock movement) |
 | GET | `/api/disruptions` | Disruption signals |
 | GET | `/api/recommendations` | AI recommendations + impact |
 | GET | `/api/recommendations/forecasts` | 30-day demand forecasts |
@@ -400,6 +422,7 @@ tradling-logistics/
 | POST | `/api/simulator/start` | Start a scenario |
 | POST | `/api/simulator/pause` | Pause simulation |
 | POST | `/api/simulator/reset` | Reset to initial state |
+| POST | `/api/simulator/reset-demo-data` | Full DB reset — truncate sim data + re-seed stock levels |
 | POST | `/api/simulator/inject` | Inject custom disruption (black swan) |
 | GET | `/api/simulator/timeline` | Event audit log |
 | GET | `/api/agent/analysis` | Agent's latest reasoning cycle (full output) |
