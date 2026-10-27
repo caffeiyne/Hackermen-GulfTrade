@@ -22,7 +22,19 @@ import {
   AgentAnalysis,
 } from "./types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// Auto-detect: if env var is set, use it. Otherwise, use the same host
+// as the frontend but on port 8000 — so when a judge opens the dashboard
+// on another laptop via http://192.168.x.x:3000, the API calls and
+// WebSocket automatically point to that same host's backend.
+function getApiBase(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== "undefined") {
+    return `${window.location.protocol}//${window.location.hostname}:8000`;
+  }
+  return "http://localhost:8000";
+}
+
+const API_BASE = getApiBase();
 
 async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {

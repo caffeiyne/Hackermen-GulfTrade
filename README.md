@@ -34,6 +34,64 @@ npm run dev
 
 ---
 
+## Judge Demo — One Laptop Serves Everyone (No Install for Judges)
+
+This is the recommended setup for live demos. **Only your laptop** runs the backend + frontend. Judges and teammates just open a URL in their browser — no clone, no install, nothing to break.
+
+### Step 1: Run setup.py (once, on your laptop)
+
+```bash
+python setup.py --db-url "postgresql://postgres:yourpass@db.xxxx.supabase.co:5432/postgres"
+```
+
+### Step 2: Double-click `demo-host.bat`
+
+That's it. It starts both services bound to all network interfaces:
+
+- **Backend** on `http://0.0.0.0:8000`
+- **Frontend** on `http://0.0.0.0:3000`
+
+The script prints your LAN IP (e.g. `192.168.1.42`).
+
+### Step 3: Share the URL
+
+Give judges/teammates this URL:
+
+```
+http://192.168.1.42:3000
+```
+
+They open it in any browser. The dashboard auto-connects to your backend — **API calls and WebSocket both auto-detect the host**, so no configuration needed on their end.
+
+### What judges can do
+
+- View the live dashboard (Overview, Analytics, Inventory Map, Forecast, Imbalances)
+- See the agent reasoning in real time
+- Watch emergency alerts fire when you inject black swan events
+- Approve/reject transfer recommendations
+
+> **Tip:** Use the **Quick-Start Demo** button on the Simulator page — it starts Scenario B at 4x speed so disruptions fire within ~2 minutes.
+
+### Manual alternative (if you prefer not to use the .bat)
+
+```bash
+# Terminal 1 — backend on all interfaces
+cd simulator
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# Terminal 2 — frontend on all interfaces
+cd dashboard
+npx next dev -H 0.0.0.0 -p 3000
+```
+
+### Network requirements
+
+- All laptops must be on the **same WiFi network** (e.g. the demo room WiFi)
+- If a firewall prompt appears, allow Python and Node.js through
+- If judges can't connect, check Windows Defender Firewall → allow port 3000 and 8000
+
+---
+
 ## Quick Start (One Command)
 
 ```bash

@@ -3,7 +3,20 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { WSEvent } from "./types";
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/ws/live";
+// Auto-detect: if env var is set, use it. Otherwise, use the same host
+// as the frontend but on port 8000 — so when a judge opens the dashboard
+// on another laptop via http://192.168.x.x:3000, the WebSocket
+// automatically connects to that same host's backend.
+function getWsUrl(): string {
+  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
+  if (typeof window !== "undefined") {
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${window.location.hostname}:8000/ws/live`;
+  }
+  return "ws://localhost:8000/ws/live";
+}
+
+const WS_URL = getWsUrl();
 
 interface UseRealTimeOptions {
   onEvent?: (event: WSEvent) => void;
