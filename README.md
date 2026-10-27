@@ -4,6 +4,36 @@
 
 ---
 
+## For Team Members — Clone & Run (5 Steps)
+
+```bash
+# 1. Clone the repo
+git clone https://github.com/caffeiyne/Hackermen-GulfTrade.git
+cd Hackermen-GulfTrade
+
+# 2. Set up the database + env files (pick one DB option below)
+#    Easiest: create a free Supabase project, grab the connection string, then:
+python setup.py --db-url "postgresql://postgres:yourpass@db.xxxx.supabase.co:5432/postgres"
+
+# 3. Terminal 1 — start the backend
+cd simulator
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+
+# 4. Terminal 2 — start the frontend
+cd dashboard
+npm install
+npm run dev
+
+# 5. Open http://localhost:3000 — you're live!
+```
+
+**Prerequisites:** Python 3.11+, Node.js 18+, and a PostgreSQL database (see DB options below).
+
+> Don't have a database? The fastest path is [Supabase](https://supabase.com) (free, no install) — just use the **direct** connection on port 5432, not the pooled one.
+
+---
+
 ## Quick Start (One Command)
 
 ```bash
