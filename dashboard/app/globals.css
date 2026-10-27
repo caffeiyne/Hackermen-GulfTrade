@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-inter: "Inter", system-ui, sans-serif;
+  --font-jetbrains: "JetBrains Mono", monospace;
+}
+
+* {
+  @apply border-buddy-border;
+}
+
+body {
+  @apply bg-buddy-bg text-buddy-text antialiased;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-buddy-surface;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-tradeling-700 rounded-full;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-tradeling-600;
+}
+
+/* Glassmorphism utility */
+.glass {
+  @apply bg-buddy-surface/80 backdrop-blur-xl border border-buddy-border;
+}
+
+/* Gradient text */
+.gradient-text {
+  @apply bg-gradient-to-r from-tradeling-400 to-tradeling-200 bg-clip-text text-transparent;
+}
+
+/* Shimmer loading effect */
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.03) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s linear infinite;
+}
