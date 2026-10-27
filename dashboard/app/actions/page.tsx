@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, Check, X, DollarSign, TrendingUp, Loader2, AlertCircle, Truck, ExternalLink, Clock, Plus, Hand, RotateCcw } from "lucide-react";
+import { ArrowRight, Check, X, DollarSign, TrendingUp, Loader2, AlertCircle, Truck, ExternalLink, Clock, Plus, Hand, RotateCcw, BarChart3 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -17,6 +17,7 @@ export default function ActionsPage() {
 
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [impact, setImpact] = useState<ImpactAssessment[]>([]);
+  const [baselineComparison, setBaselineComparison] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [actionedIds, setActionedIds] = useState<Set<string>>(new Set());
   const [processingId, setProcessingId] = useState<string | null>(null);
@@ -73,6 +74,7 @@ export default function ActionsPage() {
       const data = await api.getRecommendations();
       setRecommendations(data.recommendations || []);
       setImpact(data.impact_assessment || []);
+      setBaselineComparison(data.baseline_comparison || null);
     } catch (err) {
       console.error(err);
     } finally {
@@ -451,6 +453,112 @@ export default function ActionsPage() {
             <p className="text-sm">{error}</p>
           </div>
         </motion.div>
+      )}
+
+      {/* Baseline vs AI Solution comparison */}
+      {baselineComparison && (
+        <Card delay={0.08}>
+          <div className="flex items-center gap-2 mb-4">
+            <BarChart3 className="w-4 h-4 text-tradeling-400" />
+            <h3 className="font-medium text-buddy-text">Baseline vs. AI Solution</h3>
+            <span className="text-xs text-buddy-muted">— what happens if Sara does nothing vs. proactive transfers</span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            {/* Baseline */}
+            <div className="p-4 rounded-lg bg-buddy-bg border border-buddy-border">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-2 h-2 rounded-full bg-red-400" />
+                <p className="text-sm font-medium text-buddy-muted">{baselineComparison.baseline.label}</p>
+              </div>
+              <p className="text-xs text-buddy-muted mb-3">{baselineComparison.baseline.description}</p>
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs">
+                  <span className="text-buddy-muted">Shortage Exposure</span>
+                  <span className="font-medium text-red-400">{formatCurrency(baselineComparison.baseline.shortage_exposure_aed)}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-buddy-muted">Transfer Cost</span>
+                  <span className="font-medium text-buddy-text">{formatCurrency(baselineComparison.baseline.transfer_cost_aed)}</span>
+                </div>
+                <div className="flex justify-between text-xs pt-2 border-t border-buddy-border">
+                  <span className="text-buddy-muted font-medium">Net Position</span>
+                  <span className="font-bold text-red-400">{formatCurrency(baselineComparison.baseline.net_position_aed)}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-buddy-muted">Units at Risk</span>
+                  <span className="font-medium text-buddy-text">{formatNumber(baselineComparison.baseline.units_at_risk)}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-buddy-muted">Service Level</span>
+                  <span className="font-medium text-red-400">{baselineComparison.baseline.service_level_pct}%</span>
+                </div>
+              </div>
+            </div>
+
+            {/* AI Solution */}
+            <div className="p-4 rounded-lg bg-tradeling-950/20 border border-tradeling-800/50">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-2 h-2 rounded-full bg-tradeling-400" />
+                <p className="text-sm font-medium text-tradeling-400">{baselineComparison.ai_solution.label}</p>
+              </div>
+              <p className="text-xs text-buddy-muted mb-3">{baselineComparison.ai_solution.description}</p>
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs">
+                  <span className="text-buddy-muted">Shortage Exposure</span>
+                  <span className="font-medium text-tradeling-400">{formatCurrency(baselineComparison.ai_solution.shortage_exposure_aed)}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-buddy-muted">Transfer Cost</span>
+                  <span className="font-medium text-buddy-text">{formatCurrency(baselineComparison.ai_solution.transfer_cost_aed)}</span>
+                </div>
+                <div className="flex justify-between text-xs pt-2 border-t border-tradeling-800/30">
+                  <span className="text-buddy-muted font-medium">Net Position</span>
+                  <span className="font-bold text-tradeling-400">{formatCurrency(baselineComparison.ai_solution.net_position_aed)}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-buddy-muted">Units at Risk</span>
+                  <span className="font-medium text-buddy-text">{formatNumber(baselineComparison.ai_solution.units_at_risk)}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-buddy-muted">Service Level</span>
+                  <span className="font-medium text-tradeling-400">{baselineComparison.ai_solution.service_level_pct}%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Improvement summary */}
+          {baselineComparison.improvement && (
+            <div className="flex flex-wrap gap-3 p-3 rounded-lg bg-tradeling-950/10 border border-tradeling-800/30">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-tradeling-400" />
+                <span className="text-xs text-buddy-muted">Shortage reduced by</span>
+                <span className="text-sm font-bold text-tradeling-400">
+                  {formatCurrency(baselineComparison.improvement.shortage_reduction_aed)}
+                </span>
+                <span className="text-xs text-tradeling-400">
+                  ({baselineComparison.improvement.shortage_reduction_pct}%)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <DollarSign className="w-4 h-4 text-tradeling-400" />
+                <span className="text-xs text-buddy-muted">Net benefit</span>
+                <span className="text-sm font-bold text-tradeling-400">
+                  {formatCurrency(baselineComparison.improvement.net_benefit_aed)}
+                </span>
+              </div>
+              {baselineComparison.improvement.service_level_delta_pct > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-buddy-muted">Service level +</span>
+                  <span className="text-sm font-bold text-tradeling-400">
+                    {baselineComparison.improvement.service_level_delta_pct}%
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+        </Card>
       )}
 
       {/* Impact assessment */}

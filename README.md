@@ -2,6 +2,10 @@
 
 > AI-based demand planning and stock distribution agent for the Tradeling Hackathon. Built with PostgreSQL + FastAPI + Next.js 14.
 
+**Supplementary documents:**
+- [SUPPORTING_NOTE.md](./SUPPORTING_NOTE.md) — Business problem, datasets, method, test results, limitations, pilot requirements (deliverable #3)
+- [ANSWER_KEY.md](./ANSWER_KEY.md) — Answer key for judges to verify each test case
+
 ---
 
 ## For Team Members — Clone & Run (5 Steps)
@@ -292,6 +296,7 @@ Go to the **Actions** page:
 | Misleading sales flag | Imbalances page | Detects stockout-distorted demand |
 | Constraints checked per recommendation | Actions page | Traceable, evidence-based |
 | Before/after impact in AED | Actions page | Quantified business benefit |
+| Baseline vs. AI Solution comparison | Actions page | Shows what happens if Sara does nothing vs. proactive transfers |
 | Black swan → agent reacts in seconds | Simulator + Overview | Real-time agentic response |
 | Emergency alert toast | Top of screen (all pages) | Disruption notification fires exactly once |
 | Route disrupted badge | Actions page | Disruption-aware recommendations |
@@ -415,7 +420,7 @@ tradling-logistics/
 | POST | `/api/orders/transfers/{id}/reject` | Reject transfer |
 | POST | `/api/orders/transfers/{id}/cancel` | Cancel an approved transfer (reverses stock movement) |
 | GET | `/api/disruptions` | Disruption signals |
-| GET | `/api/recommendations` | AI recommendations + impact |
+| GET | `/api/recommendations` | AI recommendations + impact + baseline comparison |
 | GET | `/api/recommendations/forecasts` | 30-day demand forecasts |
 | GET | `/api/recommendations/imbalances` | Flagged imbalances |
 | GET | `/api/recommendations/full-analysis` | Complete decision package |

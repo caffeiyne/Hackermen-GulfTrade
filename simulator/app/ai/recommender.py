@@ -78,6 +78,7 @@ async def generate_recommendations():
 
         recommendations = []
         impact_metrics = []
+        baseline_comparison = None
 
         # Identify shortages (destinations needing stock)
         shortages = []
@@ -300,9 +301,64 @@ async def generate_recommendations():
                 },
             ]
 
+        # --- Baseline comparison ---
+        # Baseline = "do nothing" approach: Sara uses simple recent average demand
+        # and does no proactive transfers. She accepts all shortage losses.
+        baseline_shortage_aed = float(total_shortage_before)
+        baseline_transfer_cost = 0.0
+        baseline_net = -baseline_shortage_aed  # net = 0 benefit - all shortage losses
+
+        ai_shortage_aed = float(total_shortage_after)
+        ai_transfer_cost = float(total_transfer_cost)
+        ai_net = float(total_benefit)  # already net of transfer cost
+
+        baseline_comparison = {
+            "baseline": {
+                "label": "Baseline (Do Nothing)",
+                "description": "Recent average demand, no proactive transfers — Sara accepts all shortage losses",
+                "shortage_exposure_aed": round(baseline_shortage_aed, 2),
+                "transfer_cost_aed": round(baseline_transfer_cost, 2),
+                "net_position_aed": round(baseline_net, 2),
+                "units_at_risk": sum(s["shortfall"] for s in shortages),
+                "service_level_pct": round(
+                    100 * (1 - sum(s["shortfall"] for s in shortages) /
+                           max(1, sum(s["shortfall"] for s in shortages) + sum(s["available"] for s in shortages))),
+                    1
+                ),
+            },
+            "ai_solution": {
+                "label": "AI Solution (Proactive Transfers)",
+                "description": "Demand forecast with stockout correction + cost-benefit ranked transfers",
+                "shortage_exposure_aed": round(ai_shortage_aed, 2),
+                "transfer_cost_aed": round(ai_transfer_cost, 2),
+                "net_position_aed": round(ai_net, 2),
+                "units_at_risk": max(0, sum(s["shortfall"] for s in shortages) - shortage_reduced),
+                "service_level_pct": round(
+                    100 * (1 - max(0, sum(s["shortfall"] for s in shortages) - shortage_reduced) /
+                           max(1, sum(s["shortfall"] for s in shortages) + sum(s["available"] for s in shortages))),
+                    1
+                ),
+            },
+            "improvement": {
+                "shortage_reduction_aed": round(baseline_shortage_aed - ai_shortage_aed, 2),
+                "shortage_reduction_pct": round(
+                    100 * (baseline_shortage_aed - ai_shortage_aed) / max(1, baseline_shortage_aed), 1
+                ) if baseline_shortage_aed > 0 else 0,
+                "net_benefit_aed": round(ai_net - baseline_net, 2),
+                "service_level_delta_pct": round(
+                    (100 * (1 - max(0, sum(s["shortfall"] for s in shortages) - shortage_reduced) /
+                            max(1, sum(s["shortfall"] for s in shortages) + sum(s["available"] for s in shortages))))
+                    - (100 * (1 - sum(s["shortfall"] for s in shortages) /
+                            max(1, sum(s["shortfall"] for s in shortages) + sum(s["available"] for s in shortages)))),
+                    1
+                ),
+            },
+        }
+
     return {
         "recommendations": recommendations,
         "impact_assessment": impact_metrics,
+        "baseline_comparison": baseline_comparison,
         "summary": {
             "total_recommendations": len(recommendations),
             "feasible_recommendations": sum(1 for r in recommendations if r["is_feasible"]),
