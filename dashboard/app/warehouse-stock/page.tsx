@@ -287,14 +287,7 @@ export default function WarehouseStockPage() {
               radius={[4, 4, 0, 0]}
               cursor="pointer"
               onClick={(data: any) => setSelectedWarehouse(data.payload.warehouse)}
-            >
-              {warehouseStockData.map((entry, i) => (
-                <Cell
-                  key={i}
-                  fill={selectedWarehouse === entry.warehouse ? "#22d3ee" : "#f59e0b"}
-                />
-              ))}
-            </Bar>
+            />
           </BarChart>
         </ResponsiveContainer>
       </Card>
