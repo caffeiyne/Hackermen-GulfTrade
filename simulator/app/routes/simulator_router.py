@@ -234,12 +234,16 @@ async def inject_disruption(req: InjectDisruptionRequest):
 
 @simulator_router.get("/timeline")
 async def get_timeline(limit: int = 100):
-    """Get the simulation event audit log (most recent first)."""
+    """Get the simulation event audit log (most recent first).
+    Filters out low-level sale_recorded events to keep the feed focused
+    on meaningful events (disruptions, agent actions, transfers, scenario milestones).
+    """
     async with get_conn() as conn:
         rows = await conn.fetch(
             """
             SELECT log_id, event_type, event_data, sim_timestamp, real_timestamp
             FROM events.audit_log
+            WHERE event_type != 'sale_recorded'
             ORDER BY log_id DESC
             LIMIT $1
             """,
