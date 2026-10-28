@@ -114,6 +114,8 @@ export default function AnalyticsPage() {
   const [skus, setSkus] = useState<SKU[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSku, setSelectedSku] = useState<string | null>(null);
+  const [selectedWarehouse, setSelectedWarehouse] = useState<string | null>(null);
+  const [selectedRecRank, setSelectedRecRank] = useState<number | null>(null);
 
   useEffect(() => {
     async function loadData() {
@@ -258,16 +260,8 @@ export default function AnalyticsPage() {
     }
   }, []);
 
-  // Click handlers for chart navigation
-  const goToWarehouse = (wh: string) => router.push(`/warehouse-stock?warehouse=${wh}`);
+  // Click handler for imbalance pie navigation
   const goToImbalances = () => router.push("/imbalances");
-  const goToActions = () => router.push("/actions");
-
-  const ClickHint = () => (
-    <span className="text-xs text-tradeling-400/70 flex items-center gap-1 ml-auto cursor-pointer">
-      Click to explore <ExternalLink className="w-3 h-3" />
-    </span>
-  );
 
   // 4. Imbalances breakdown (pie)
   const imbalancesBreakdown = useMemo(() => {
@@ -364,6 +358,57 @@ export default function AnalyticsPage() {
     });
   }, [salesSummary]);
 
+  // 11. Warehouse detail — per-SKU stock breakdown for the selected warehouse
+  const warehouseStockDetail = useMemo(() => {
+    if (!selectedWarehouse) return null;
+    const skuMap = new Map(skus.map((s) => [s.sku_id, s]));
+    const rows = stockLevels
+      .filter((s) => s.warehouse_id === selectedWarehouse)
+      .map((s) => {
+        const sku = skuMap.get(s.sku_id);
+        const sales = salesSummary.find(
+          (x) => x.sku_id === s.sku_id && x.warehouse_id === selectedWarehouse
+        );
+        const forecast = forecasts.find(
+          (f) => f.sku_id === s.sku_id && f.warehouse_id === selectedWarehouse
+        );
+        const ageBucket = stockAge.find(
+          (a) => a.sku_id === s.sku_id && a.warehouse_id === selectedWarehouse
+        );
+        return {
+          sku_id: s.sku_id,
+          name: sku?.name || s.sku_id,
+          product_type: sku?.product_type || "—",
+          available: s.available_qty,
+          reserved: s.reserved_qty,
+          safety: s.safety_stock,
+          inbound: s.inbound_qty,
+          unitsSold: sales?.total_qty ?? 0,
+          revenue: sales ? Number(sales.total_value) : 0,
+          avgDaily: sales?.avg_daily_qty ?? 0,
+          forecast30d: forecast?.forecast_qty_30d ?? 0,
+          ageBucket: ageBucket?.age_bucket || "—",
+        };
+      })
+      .sort((a, b) => b.available + b.inbound - (a.available + a.inbound));
+    const totals = {
+      available: rows.reduce((s, r) => s + r.available, 0),
+      reserved: rows.reduce((s, r) => s + r.reserved, 0),
+      safety: rows.reduce((s, r) => s + r.safety, 0),
+      inbound: rows.reduce((s, r) => s + r.inbound, 0),
+      unitsSold: rows.reduce((s, r) => s + r.unitsSold, 0),
+      revenue: rows.reduce((s, r) => s + r.revenue, 0),
+      forecast30d: rows.reduce((s, r) => s + r.forecast30d, 0),
+    };
+    return { rows, totals, skuCount: rows.length };
+  }, [selectedWarehouse, stockLevels, skus, salesSummary, forecasts, stockAge]);
+
+  // 12. Recommendation detail for the selected rank
+  const selectedRecDetail = useMemo(() => {
+    if (!selectedRecRank) return null;
+    return recommendations.find((r) => r.rank === selectedRecRank) || null;
+  }, [selectedRecRank, recommendations]);
+
   // ---- KPI calculations ----
   const totalRevenue = salesSummary.reduce((sum, s) => sum + Number(s.total_value), 0);
   const totalUnitsSold = salesSummary.reduce((sum, s) => sum + s.total_qty, 0);
@@ -440,7 +485,6 @@ export default function AnalyticsPage() {
           <div className="flex items-center gap-2 mb-4">
             <WarehouseIcon className="w-4 h-4 text-tradeling-400" />
             <h3 className="font-medium text-buddy-text">Stock Composition by Warehouse</h3>
-            <ClickHint />
           </div>
           <ResponsiveContainer width="100%" height={280}>
             <BarChart data={warehouseStockData}>
@@ -449,10 +493,10 @@ export default function AnalyticsPage() {
               <YAxis stroke="#6b7280" fontSize={12} />
               <Tooltip content={<DarkTooltip />} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="Available" stackId="a" fill={COLORS.tradeling} cursor="pointer" onClick={(d: any) => goToWarehouse(d.payload.warehouse)} />
-              <Bar dataKey="Reserved" stackId="a" fill={COLORS.orange} cursor="pointer" onClick={(d: any) => goToWarehouse(d.payload.warehouse)} />
-              <Bar dataKey="Inbound" stackId="a" fill={COLORS.blue} cursor="pointer" onClick={(d: any) => goToWarehouse(d.payload.warehouse)} />
-              <Bar dataKey="Safety" stackId="a" fill={COLORS.yellow} cursor="pointer" onClick={(d: any) => goToWarehouse(d.payload.warehouse)} />
+              <Bar dataKey="Available" stackId="a" fill={COLORS.tradeling} cursor="pointer" onClick={(d: any) => setSelectedWarehouse(d.payload.warehouse)} />
+              <Bar dataKey="Reserved" stackId="a" fill={COLORS.orange} cursor="pointer" onClick={(d: any) => setSelectedWarehouse(d.payload.warehouse)} />
+              <Bar dataKey="Inbound" stackId="a" fill={COLORS.blue} cursor="pointer" onClick={(d: any) => setSelectedWarehouse(d.payload.warehouse)} />
+              <Bar dataKey="Safety" stackId="a" fill={COLORS.yellow} cursor="pointer" onClick={(d: any) => setSelectedWarehouse(d.payload.warehouse)} />
             </BarChart>
           </ResponsiveContainer>
         </Card>
@@ -462,7 +506,6 @@ export default function AnalyticsPage() {
           <div className="flex items-center gap-2 mb-4">
             <DollarSign className="w-4 h-4 text-blue-400" />
             <h3 className="font-medium text-buddy-text">Sales Volume & Revenue by Warehouse</h3>
-            <ClickHint />
           </div>
           <ResponsiveContainer width="100%" height={280}>
             <BarChart data={salesByWarehouse}>
@@ -472,12 +515,146 @@ export default function AnalyticsPage() {
               <YAxis yAxisId="right" orientation="right" stroke="#6b7280" fontSize={12} />
               <Tooltip content={<DarkTooltip />} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar yAxisId="left" dataKey="units" name="Units Sold" fill={COLORS.tradeling} radius={[4, 4, 0, 0]} cursor="pointer" onClick={(d: any) => goToWarehouse(d.payload.warehouse)} />
-              <Bar yAxisId="right" dataKey="revenue" name="Revenue (AED)" fill={COLORS.blue} radius={[4, 4, 0, 0]} cursor="pointer" onClick={(d: any) => goToWarehouse(d.payload.warehouse)} />
+              <Bar yAxisId="left" dataKey="units" name="Units Sold" fill={COLORS.tradeling} radius={[4, 4, 0, 0]} cursor="pointer" onClick={(d: any) => setSelectedWarehouse(d.payload.warehouse)} />
+              <Bar yAxisId="right" dataKey="revenue" name="Revenue (AED)" fill={COLORS.blue} radius={[4, 4, 0, 0]} cursor="pointer" onClick={(d: any) => setSelectedWarehouse(d.payload.warehouse)} />
             </BarChart>
           </ResponsiveContainer>
         </Card>
       </div>
+
+      {/* Warehouse Detail Panel — appears when a warehouse bar is clicked */}
+      <AnimatePresence>
+        {warehouseStockDetail && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.3 }}
+            className="mt-2"
+          >
+            <Card>
+              {/* Header */}
+              <div className="flex items-start justify-between mb-5">
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-10 h-10 rounded-lg flex items-center justify-center"
+                    style={{ backgroundColor: (WAREHOUSE_COLORS[selectedWarehouse!] || COLORS.tradeling) + "22", color: WAREHOUSE_COLORS[selectedWarehouse!] || COLORS.tradeling }}
+                  >
+                    <WarehouseIcon className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-buddy-text">{selectedWarehouse}</h3>
+                      <Badge variant="neutral">{warehouseStockDetail.skuCount} SKUs</Badge>
+                    </div>
+                    <p className="text-xs text-buddy-muted mt-0.5">
+                      Inventory & sales breakdown for {selectedWarehouse} warehouse
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedWarehouse(null)}
+                  className="p-1.5 rounded-lg hover:bg-buddy-bg text-buddy-muted hover:text-buddy-text transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* KPI Grid */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+                <div className="p-3 rounded-lg bg-buddy-bg border border-buddy-border">
+                  <p className="text-xs text-buddy-muted mb-1">Available</p>
+                  <p className="text-lg font-bold text-tradeling-400">{formatNumber(warehouseStockDetail.totals.available)}</p>
+                </div>
+                <div className="p-3 rounded-lg bg-buddy-bg border border-buddy-border">
+                  <p className="text-xs text-buddy-muted mb-1">Reserved</p>
+                  <p className="text-lg font-bold text-orange-400">{formatNumber(warehouseStockDetail.totals.reserved)}</p>
+                </div>
+                <div className="p-3 rounded-lg bg-buddy-bg border border-buddy-border">
+                  <p className="text-xs text-buddy-muted mb-1">Inbound</p>
+                  <p className="text-lg font-bold text-blue-400">{formatNumber(warehouseStockDetail.totals.inbound)}</p>
+                </div>
+                <div className="p-3 rounded-lg bg-buddy-bg border border-buddy-border">
+                  <p className="text-xs text-buddy-muted mb-1">Revenue (90d)</p>
+                  <p className="text-lg font-bold text-cyan-400">{formatCurrency(warehouseStockDetail.totals.revenue)}</p>
+                </div>
+              </div>
+
+              {/* Mini chart + table */}
+              <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+                {/* Bar chart of top SKUs by available stock */}
+                <div className="lg:col-span-2">
+                  <h4 className="text-sm font-medium text-buddy-text mb-3">Top SKUs by Available Stock</h4>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart
+                      data={warehouseStockDetail.rows.slice(0, 8)}
+                      layout="vertical"
+                      margin={{ left: 10, right: 10, top: 5, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e242d" horizontal={false} />
+                      <XAxis type="number" stroke="#6b7280" fontSize={10} />
+                      <YAxis type="category" dataKey="sku_id" stroke="#6b7280" fontSize={9} width={80} />
+                      <Tooltip content={<DarkTooltip />} cursor={{ fill: "#1e242d40" }} />
+                      <Bar dataKey="available" name="Available" fill={WAREHOUSE_COLORS[selectedWarehouse!] || COLORS.tradeling} radius={[0, 4, 4, 0]} barSize={14} />
+                      <Bar dataKey="inbound" name="Inbound" fill={COLORS.blue} radius={[0, 4, 4, 0]} barSize={14} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Detailed table */}
+                <div className="lg:col-span-3 overflow-x-auto">
+                  <h4 className="text-sm font-medium text-buddy-text mb-3">Per-SKU Breakdown</h4>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-left border-b border-buddy-border">
+                        <th className="pb-1.5 pr-3 font-medium text-buddy-muted">SKU</th>
+                        <th className="pb-1.5 pr-3 font-medium text-buddy-muted text-right">Available</th>
+                        <th className="pb-1.5 pr-3 font-medium text-buddy-muted text-right">Inbound</th>
+                        <th className="pb-1.5 pr-3 font-medium text-buddy-muted text-right">Sold</th>
+                        <th className="pb-1.5 pr-3 font-medium text-buddy-muted text-right">Revenue</th>
+                        <th className="pb-1.5 pr-3 font-medium text-buddy-muted text-right">Forecast</th>
+                        <th className="pb-1.5 font-medium text-buddy-muted">Age</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {warehouseStockDetail.rows.map((r) => (
+                        <tr
+                          key={r.sku_id}
+                          className="border-b border-buddy-border/30 cursor-pointer hover:bg-buddy-bg/50"
+                          onClick={() => { setSelectedSku(r.sku_id); setSelectedWarehouse(null); }}
+                        >
+                          <td className="py-1.5 pr-3 font-medium text-buddy-text">{r.name}</td>
+                          <td className="py-1.5 pr-3 text-right text-tradeling-400">{formatNumber(r.available)}</td>
+                          <td className="py-1.5 pr-3 text-right text-blue-400">{r.inbound > 0 ? formatNumber(r.inbound) : "—"}</td>
+                          <td className="py-1.5 pr-3 text-right text-buddy-text">{formatNumber(r.unitsSold)}</td>
+                          <td className="py-1.5 pr-3 text-right text-cyan-400">{formatCurrency(r.revenue)}</td>
+                          <td className="py-1.5 pr-3 text-right text-purple-400">{formatNumber(r.forecast30d)}</td>
+                          <td className="py-1.5">
+                            <span className={r.ageBucket === "90+" ? "text-red-400" : r.ageBucket === "61-90" ? "text-yellow-400" : "text-buddy-muted"}>
+                              {r.ageBucket}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t border-buddy-border font-medium">
+                        <td className="pt-2 pr-3 text-buddy-muted">Totals</td>
+                        <td className="pt-2 pr-3 text-right text-tradeling-400">{formatNumber(warehouseStockDetail.totals.available)}</td>
+                        <td className="pt-2 pr-3 text-right text-blue-400">{formatNumber(warehouseStockDetail.totals.inbound)}</td>
+                        <td className="pt-2 pr-3 text-right text-buddy-text">{formatNumber(warehouseStockDetail.totals.unitsSold)}</td>
+                        <td className="pt-2 pr-3 text-right text-cyan-400">{formatCurrency(warehouseStockDetail.totals.revenue)}</td>
+                        <td className="pt-2 pr-3 text-right text-purple-400">{formatNumber(warehouseStockDetail.totals.forecast30d)}</td>
+                        <td className="pt-2"></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Row 2: Top SKUs by Sales + Imbalance Distribution */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -532,7 +709,6 @@ export default function AnalyticsPage() {
           <div className="flex items-center gap-2 mb-4">
             <AlertTriangle className="w-4 h-4 text-yellow-400" />
             <h3 className="font-medium text-buddy-text">Imbalance Distribution</h3>
-            <ClickHint />
           </div>
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
@@ -727,7 +903,6 @@ export default function AnalyticsPage() {
           <div className="flex items-center gap-2 mb-4">
             <Activity className="w-4 h-4 text-purple-400" />
             <h3 className="font-medium text-buddy-text">Stock Age Distribution by Warehouse</h3>
-            <ClickHint />
           </div>
           <ResponsiveContainer width="100%" height={280}>
             <AreaChart data={stockAgeData}>
@@ -750,9 +925,9 @@ export default function AnalyticsPage() {
               <YAxis stroke="#6b7280" fontSize={12} />
               <Tooltip content={<DarkTooltip />} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Area type="monotone" dataKey="DXB" stackId="1" stroke={COLORS.tradeling} fill="url(#colorDXB)" cursor="pointer" onClick={() => goToWarehouse("DXB")} />
-              <Area type="monotone" dataKey="AUH" stackId="1" stroke={COLORS.blue} fill="url(#colorAUH)" cursor="pointer" onClick={() => goToWarehouse("AUH")} />
-              <Area type="monotone" dataKey="SHJ" stackId="1" stroke={COLORS.purple} fill="url(#colorSHJ)" cursor="pointer" onClick={() => goToWarehouse("SHJ")} />
+              <Area type="monotone" dataKey="DXB" stackId="1" stroke={COLORS.tradeling} fill="url(#colorDXB)" cursor="pointer" onClick={() => setSelectedWarehouse("DXB")} />
+              <Area type="monotone" dataKey="AUH" stackId="1" stroke={COLORS.blue} fill="url(#colorAUH)" cursor="pointer" onClick={() => setSelectedWarehouse("AUH")} />
+              <Area type="monotone" dataKey="SHJ" stackId="1" stroke={COLORS.purple} fill="url(#colorSHJ)" cursor="pointer" onClick={() => setSelectedWarehouse("SHJ")} />
             </AreaChart>
           </ResponsiveContainer>
         </Card>
@@ -762,7 +937,6 @@ export default function AnalyticsPage() {
           <div className="flex items-center gap-2 mb-4">
             <Package className="w-4 h-4 text-tradeling-400" />
             <h3 className="font-medium text-buddy-text">Revenue by Product Type</h3>
-            <ClickHint />
           </div>
           <ResponsiveContainer width="100%" height={280}>
             <PieChart>
@@ -799,7 +973,6 @@ export default function AnalyticsPage() {
             <h3 className="font-medium text-buddy-text">
               Forecast Demand vs Current Stock (per SKU/Warehouse)
             </h3>
-            <ClickHint />
           </div>
           <ResponsiveContainer width="100%" height={300}>
             <ScatterChart margin={{ left: 10, right: 20 }}>
@@ -852,7 +1025,6 @@ export default function AnalyticsPage() {
           <div className="flex items-center gap-2 mb-4">
             <WarehouseIcon className="w-4 h-4 text-tradeling-400" />
             <h3 className="font-medium text-buddy-text">Capacity Utilization</h3>
-            <ClickHint />
           </div>
           <ResponsiveContainer width="100%" height={300}>
             <RadialBarChart
@@ -862,7 +1034,7 @@ export default function AnalyticsPage() {
               startAngle={90}
               endAngle={-270}
             >
-              <RadialBar background dataKey="utilization" cornerRadius={6} cursor="pointer" onClick={(d: any) => d && d.name && goToWarehouse(d.name)} />
+              <RadialBar background dataKey="utilization" cornerRadius={6} cursor="pointer" onClick={(d: any) => d && d.name && setSelectedWarehouse(d.name)} />
               <Legend
                 iconSize={10}
                 layout="vertical"
@@ -883,7 +1055,6 @@ export default function AnalyticsPage() {
           <div className="flex items-center gap-2 mb-4">
             <DollarSign className="w-4 h-4 text-tradeling-400" />
             <h3 className="font-medium text-buddy-text">Recommendation Net Benefit by Rank</h3>
-            <ClickHint />
           </div>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={recBenefitData} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
@@ -894,7 +1065,13 @@ export default function AnalyticsPage() {
                 content={<DarkTooltip formatter={(v: any) => [formatCurrency(Number(v)), "Net Benefit"]} />}
                 cursor={{ fill: "#1e242d40" }}
               />
-              <Bar dataKey="netBenefit" name="Net Benefit" radius={[4, 4, 0, 0]} barSize={28} cursor="pointer" onClick={goToActions}>
+              <Bar dataKey="netBenefit" name="Net Benefit" radius={[4, 4, 0, 0]} barSize={28} cursor="pointer" onClick={(_d: any, index: number) => {
+                const entry = recBenefitData[index];
+                if (entry) {
+                  const rec = recommendations[index];
+                  if (rec) setSelectedRecRank(rec.rank);
+                }
+              }}>
                 {recBenefitData.map((entry, i) => (
                   <Cell key={i} fill={entry.feasible ? COLORS.tradeling : COLORS.red} />
                 ))}
@@ -916,7 +1093,6 @@ export default function AnalyticsPage() {
           <div className="flex items-center gap-2 mb-4">
             <Activity className="w-4 h-4 text-blue-400" />
             <h3 className="font-medium text-buddy-text">Average Daily Sales Rate by Warehouse</h3>
-            <ClickHint />
           </div>
           <ResponsiveContainer width="100%" height={280}>
             <LineChart data={avgDailyByWarehouse}>
@@ -932,12 +1108,139 @@ export default function AnalyticsPage() {
                 strokeWidth={3}
                 dot={{ fill: COLORS.blue, r: 6 }}
                 cursor="pointer"
-                onClick={(d: any) => d && d.payload && goToWarehouse(d.payload.warehouse)}
+                onClick={(d: any) => d && d.payload && setSelectedWarehouse(d.payload.warehouse)}
               />
             </LineChart>
           </ResponsiveContainer>
         </Card>
       </div>
+
+      {/* Recommendation Detail Panel — appears when a rec bar is clicked */}
+      <AnimatePresence>
+        {selectedRecDetail && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.3 }}
+            className="mt-2"
+          >
+            <Card>
+              {/* Header */}
+              <div className="flex items-start justify-between mb-5">
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${selectedRecDetail.is_feasible ? "bg-tradeling-500/20 text-tradeling-400" : "bg-red-500/20 text-red-400"}`}>
+                    <DollarSign className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-buddy-text">Recommendation #{selectedRecDetail.rank}</h3>
+                      <Badge variant={selectedRecDetail.is_feasible ? "success" : "danger"}>
+                        {selectedRecDetail.is_feasible ? "Feasible" : "Not Recommended"}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-buddy-muted mt-0.5">
+                      {selectedRecDetail.sku_name || selectedRecDetail.sku_id} · {selectedRecDetail.from_warehouse} → {selectedRecDetail.to_warehouse}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => router.push("/actions")}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-tradeling-500/10 text-tradeling-400 hover:bg-tradeling-500/20 transition-colors flex items-center gap-1"
+                  >
+                    Go to Actions <ExternalLink className="w-3 h-3" />
+                  </button>
+                  <button
+                    onClick={() => setSelectedRecRank(null)}
+                    className="p-1.5 rounded-lg hover:bg-buddy-bg text-buddy-muted hover:text-buddy-text transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* KPI Grid */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+                <div className="p-3 rounded-lg bg-buddy-bg border border-buddy-border">
+                  <p className="text-xs text-buddy-muted mb-1">Transfer Qty</p>
+                  <p className="text-lg font-bold text-blue-400">{formatNumber(selectedRecDetail.quantity)}</p>
+                </div>
+                <div className="p-3 rounded-lg bg-buddy-bg border border-buddy-border">
+                  <p className="text-xs text-buddy-muted mb-1">Transfer Cost</p>
+                  <p className="text-lg font-bold text-orange-400">{formatCurrency(selectedRecDetail.transfer_cost)}</p>
+                </div>
+                <div className="p-3 rounded-lg bg-buddy-bg border border-buddy-border">
+                  <p className="text-xs text-buddy-muted mb-1">Expected Benefit</p>
+                  <p className="text-lg font-bold text-cyan-400">{formatCurrency(selectedRecDetail.expected_benefit)}</p>
+                </div>
+                <div className="p-3 rounded-lg bg-buddy-bg border border-buddy-border">
+                  <p className="text-xs text-buddy-muted mb-1">Net Benefit</p>
+                  <p className={`text-lg font-bold ${selectedRecDetail.net_benefit > 0 ? "text-tradeling-400" : "text-red-400"}`}>
+                    {formatCurrency(selectedRecDetail.net_benefit)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Route & constraints */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Route info */}
+                <div className="space-y-3">
+                  <h4 className="text-sm font-medium text-buddy-text">Route Details</h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-buddy-muted">SKU</span>
+                      <span className="text-buddy-text">{selectedRecDetail.sku_name || selectedRecDetail.sku_id}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-buddy-muted">From</span>
+                      <span className="text-tradeling-400 font-medium">{selectedRecDetail.from_warehouse}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-buddy-muted">To</span>
+                      <span className="text-blue-400 font-medium">{selectedRecDetail.to_warehouse}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-buddy-muted">Lead Time</span>
+                      <span className="text-buddy-text">{selectedRecDetail.lead_time_days} days</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-buddy-muted">Confidence</span>
+                      <span className={`font-medium ${selectedRecDetail.confidence_level === "high" ? "text-green-400" : selectedRecDetail.confidence_level === "medium" ? "text-yellow-400" : "text-red-400"}`}>
+                        {selectedRecDetail.confidence_level}
+                      </span>
+                    </div>
+                    {selectedRecDetail.route_disrupted && (
+                      <div className="flex items-center gap-1 text-xs text-red-400">
+                        <AlertTriangle className="w-3 h-3" /> Route disrupted
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Reason & constraints */}
+                <div className="space-y-3">
+                  <h4 className="text-sm font-medium text-buddy-text">Reasoning & Constraints</h4>
+                  <div className="p-3 rounded-lg bg-buddy-bg border border-buddy-border text-xs text-buddy-text leading-relaxed">
+                    {selectedRecDetail.reason}
+                  </div>
+                  {selectedRecDetail.constraints_checked && selectedRecDetail.constraints_checked.length > 0 && (
+                    <div className="space-y-1">
+                      <p className="text-xs text-buddy-muted">Constraints checked:</p>
+                      {selectedRecDetail.constraints_checked.map((c, i) => (
+                        <div key={i} className="flex items-center gap-2 text-xs">
+                          <span className="w-1.5 h-1.5 rounded-full bg-tradeling-400" />
+                          <span className="text-buddy-text">{c}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Summary stats footer */}
       <Card delay={0.6}>
