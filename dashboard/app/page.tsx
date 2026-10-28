@@ -6,6 +6,8 @@ import { TrendingUp, TrendingDown, AlertTriangle, DollarSign, Package, Zap } fro
 import { Card, CardHeader, CardTitle, CardValue } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { AgentPanel } from "@/components/AgentPanel";
+import { UAEMap } from "@/components/UAEMap";
+import { WarehouseDetailPanel } from "@/components/WarehouseDetailPanel";
 import { api } from "@/lib/api";
 import { formatCurrency, formatNumber } from "@/lib/utils";
 import type { InventoryOverview, ImbalanceFlag, Recommendation } from "@/lib/types";
@@ -15,6 +17,7 @@ export default function OverviewPage() {
   const [imbalances, setImbalances] = useState<ImbalanceFlag[]>([]);
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedWarehouse, setSelectedWarehouse] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadData() {
@@ -124,6 +127,21 @@ export default function OverviewPage() {
           );
         })}
       </div>
+
+      {/* UAE Map + Warehouse Detail Panel */}
+      <UAEMap
+        selectedWarehouse={selectedWarehouse}
+        onWarehouseSelect={(id) =>
+          setSelectedWarehouse(id === selectedWarehouse ? null : id)
+        }
+      />
+      <WarehouseDetailPanel
+        warehouseId={selectedWarehouse}
+        warehouseName={
+          overview.find((w) => w.warehouse_id === selectedWarehouse)?.warehouse_name
+        }
+        onClose={() => setSelectedWarehouse(null)}
+      />
 
       {/* AI Agent Reasoning Panel */}
       <AgentPanel />

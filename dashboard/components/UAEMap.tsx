@@ -18,6 +18,8 @@ import type { InventoryOverview, Disruption, WSEvent, TransferProposal } from "@
  *  - Animated transfer routes (dashed line + moving truck icon)
  *  - Disrupted routes turn red and flash
  *  - Transfer proposals show as pending animations
+ *  - Clickable pins with selected state + callback for detail panels
+ *  - WAREHOUSES array is easy to extend — just add a city with x/y coords
  */
 
 interface WarehouseNode {
@@ -28,6 +30,11 @@ interface WarehouseNode {
   y: number;
 }
 
+/**
+ * To add a new city, just append to this array with an id, name, city,
+ * and x/y coordinates within the SVG viewBox (0 0 480 320).
+ * Routes will auto-generate between all pairs.
+ */
 const WAREHOUSES: WarehouseNode[] = [
   { id: "DXB", name: "Dubai Warehouse", city: "Dubai", x: 280, y: 180 },
   { id: "AUH", name: "Abu Dhabi Warehouse", city: "Abu Dhabi", x: 140, y: 250 },
@@ -50,7 +57,12 @@ interface TransferAnimation {
   status: "proposed" | "approved" | "in_transit";
 }
 
-export function UAEMap() {
+interface UAEMapProps {
+  selectedWarehouse?: string | null;
+  onWarehouseSelect?: (warehouseId: string) => void;
+}
+
+export function UAEMap({ selectedWarehouse, onWarehouseSelect }: UAEMapProps = {}) {
   const [overview, setOverview] = useState<InventoryOverview[]>([]);
   const [disruptions, setDisruptions] = useState<Disruption[]>([]);
   const [transfers, setTransfers] = useState<TransferProposal[]>([]);
@@ -149,6 +161,9 @@ export function UAEMap() {
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <h3 className="font-medium text-buddy-text">UAE Warehouse Network</h3>
+          {onWarehouseSelect && (
+            <span className="text-[10px] text-buddy-muted ml-1">click a pin to explore</span>
+          )}
         </div>
         <div className="flex items-center gap-3 text-xs">
           {disruptions.length > 0 && (
@@ -270,9 +285,15 @@ export function UAEMap() {
             const color = getStatusColor(status);
             const whData = overview.find((w) => w.warehouse_id === wh.id);
             const stock = whData?.total_available || 0;
+            const isSelected = selectedWarehouse === wh.id;
+            const isInteractive = !!onWarehouseSelect;
 
             return (
-              <g key={wh.id}>
+              <g
+                key={wh.id}
+                onClick={isInteractive ? () => onWarehouseSelect(wh.id) : undefined}
+                style={isInteractive ? { cursor: "pointer" } : undefined}
+              >
                 {/* Pulsing aura for critical/warning */}
                 {status !== "healthy" && (
                   <circle cx={wh.x} cy={wh.y} r="25" fill={color} opacity="0.15">
@@ -291,11 +312,26 @@ export function UAEMap() {
                   </circle>
                 )}
 
+                {/* Selected highlight ring */}
+                {isSelected && (
+                  <circle cx={wh.x} cy={wh.y} r="26" fill="none" stroke={color} strokeWidth="2" opacity="0.6">
+                    <animate attributeName="r" values="22;28;22" dur="1.5s" repeatCount="indefinite" />
+                    <animate attributeName="opacity" values="0.6;0.2;0.6" dur="1.5s" repeatCount="indefinite" />
+                  </circle>
+                )}
+
                 {/* Outer ring */}
-                <circle cx={wh.x} cy={wh.y} r="18" fill="rgba(30, 30, 50, 0.8)" stroke={color} strokeWidth="2" />
+                <circle
+                  cx={wh.x}
+                  cy={wh.y}
+                  r="18"
+                  fill={isSelected ? "rgba(40, 40, 70, 0.9)" : "rgba(30, 30, 50, 0.8)"}
+                  stroke={color}
+                  strokeWidth={isSelected ? 3 : 2}
+                />
 
                 {/* Inner circle */}
-                <circle cx={wh.x} cy={wh.y} r="12" fill={color} opacity="0.2" />
+                <circle cx={wh.x} cy={wh.y} r="12" fill={color} opacity={isSelected ? 0.35 : 0.2} />
 
                 {/* Warehouse icon placeholder (use text for SVG) */}
                 <text
@@ -314,8 +350,9 @@ export function UAEMap() {
                 <text
                   x={wh.x}
                   y={wh.y + 35}
-                  fill="rgba(200, 200, 220, 0.8)"
-                  fontSize="9"
+                  fill={isSelected ? "rgba(255, 255, 255, 0.95)" : "rgba(200, 200, 220, 0.8)"}
+                  fontSize={isSelected ? 10 : 9}
+                  fontWeight={isSelected ? 600 : 400}
                   textAnchor="middle"
                   fontFamily="sans-serif"
                 >

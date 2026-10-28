@@ -7,6 +7,7 @@ import { MapPin, Package, AlertCircle, ArrowRight } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { UAEMap } from "@/components/UAEMap";
+import { WarehouseDetailPanel } from "@/components/WarehouseDetailPanel";
 import { api } from "@/lib/api";
 import { formatNumber } from "@/lib/utils";
 import type { StockLevel, Warehouse, InventoryOverview } from "@/lib/types";
@@ -144,7 +145,15 @@ export default function InventoryMapPage() {
       </div>
 
       {/* UAE Map with animated transfers */}
-      <UAEMap />
+      <UAEMap
+        selectedWarehouse={selectedWh}
+        onWarehouseSelect={(id) => setSelectedWh(id === selectedWh ? null : id)}
+      />
+      <WarehouseDetailPanel
+        warehouseId={selectedWh}
+        warehouseName={warehouses.find((w) => w.warehouse_id === selectedWh)?.name}
+        onClose={() => setSelectedWh(null)}
+      />
 
       {/* SKU-level stock table */}
       <Card delay={0.3}>
