@@ -8,8 +8,8 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/lib/api";
-import { formatCurrency, formatNumber } from "@/lib/utils";
-import type { Recommendation, ImpactAssessment, SKU, Warehouse } from "@/lib/types";
+import { formatCurrency, formatNumber, cn } from "@/lib/utils";
+import type { Recommendation, ImpactAssessment, SKU, Warehouse, StockLevel } from "@/lib/types";
 
 export default function ActionsPage() {
   const searchParams = useSearchParams();
@@ -43,6 +43,10 @@ export default function ActionsPage() {
   const [manualLoading, setManualLoading] = useState(false);
   const [manualError, setManualError] = useState<string | null>(null);
   const [manualSuccess, setManualSuccess] = useState<string | null>(null);
+  const [skuStock, setSkuStock] = useState<StockLevel[]>([]);
+  const [manualTransferId, setManualTransferId] = useState<string | null>(null);
+  const [manualCancelling, setManualCancelling] = useState(false);
+  const [manualCancelled, setManualCancelled] = useState(false);
 
   const RETENTION_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -106,6 +110,23 @@ export default function ActionsPage() {
     loadData();
   }, [showManualPanel]);
 
+  // Fetch stock levels for the selected SKU across all warehouses
+  useEffect(() => {
+    if (!manualForm.sku_id) {
+      setSkuStock([]);
+      return;
+    }
+    const fetchStock = async () => {
+      try {
+        const data = await api.getStockLevels(undefined, manualForm.sku_id);
+        setSkuStock(data);
+      } catch {
+        setSkuStock([]);
+      }
+    };
+    fetchStock();
+  }, [manualForm.sku_id]);
+
   const handleManualSubmit = async () => {
     setManualError(null);
     setManualSuccess(null);
@@ -130,13 +151,31 @@ export default function ActionsPage() {
         quantity: manualForm.quantity,
       }) as any;
       setManualSuccess(result.message || "Transfer executed successfully");
+      setManualTransferId(result.transfer_id || null);
+      setManualCancelled(false);
       setManualForm({ sku_id: "", from_warehouse: "", to_warehouse: "", quantity: 0 });
+      setSkuStock([]);
       // Reload recommendations to reflect updated inventory
       await load();
     } catch (err: any) {
       setManualError(err.message || "Failed to execute transfer");
     } finally {
       setManualLoading(false);
+    }
+  };
+
+  const handleManualCancel = async () => {
+    if (!manualTransferId) return;
+    setManualCancelling(true);
+    try {
+      const result = await api.cancelTransfer(manualTransferId) as any;
+      setManualCancelled(true);
+      setManualSuccess(result.message || "Transfer cancelled — stock returned");
+      await load();
+    } catch (err: any) {
+      setManualError(err.message || "Failed to cancel transfer");
+    } finally {
+      setManualCancelling(false);
     }
   };
 
@@ -292,14 +331,40 @@ export default function ActionsPage() {
                 </div>
               )}
               {manualSuccess && (
-                <div className="p-3 rounded-lg border bg-green-950/30 border-green-900/50 text-green-400 mb-4 flex items-center justify-between gap-2">
+                <div className={cn(
+                  "p-3 rounded-lg border mb-4 flex items-center justify-between gap-2",
+                  manualCancelled
+                    ? "bg-amber-950/30 border-amber-900/50 text-amber-400"
+                    : "bg-green-950/30 border-green-900/50 text-green-400"
+                )}>
                   <div className="flex items-center gap-2">
-                    <Check className="w-4 h-4 shrink-0" />
+                    {manualCancelled ? (
+                      <RotateCcw className="w-4 h-4 shrink-0" />
+                    ) : (
+                      <Check className="w-4 h-4 shrink-0" />
+                    )}
                     <p className="text-sm">{manualSuccess}</p>
                   </div>
-                  <button onClick={() => setManualSuccess(null)} className="opacity-50 hover:opacity-100 shrink-0">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {manualTransferId && !manualCancelled && (
+                      <Button
+                        onClick={handleManualCancel}
+                        disabled={manualCancelling}
+                        variant="secondary"
+                        size="sm"
+                      >
+                        {manualCancelling ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <RotateCcw className="w-3.5 h-3.5" />
+                        )}
+                        {manualCancelling ? "Cancelling..." : "Cancel Transfer"}
+                      </Button>
+                    )}
+                    <button onClick={() => { setManualSuccess(null); setManualTransferId(null); setManualCancelled(false); }} className="opacity-50 hover:opacity-100">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -370,6 +435,57 @@ export default function ActionsPage() {
                   />
                 </div>
               </div>
+
+              {/* Current stock for selected SKU across all warehouses */}
+              {manualForm.sku_id && skuStock.length > 0 && (
+                <div className="mt-4 p-3 rounded-lg border border-buddy-border bg-buddy-bg/50">
+                  <div className="flex items-center gap-2 mb-2">
+                    <BarChart3 className="w-3.5 h-3.5 text-tradeling-400" />
+                    <span className="text-xs text-buddy-muted">
+                      Current stock for {manualForm.sku_id} across all warehouses
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {warehouses.map((wh) => {
+                      const stock = skuStock.find((s) => s.warehouse_id === wh.warehouse_id);
+                      const available = stock?.available_qty ?? 0;
+                      const reserved = stock?.reserved_qty ?? 0;
+                      const inbound = stock?.inbound_qty ?? 0;
+                      const isSelectedFrom = manualForm.from_warehouse === wh.warehouse_id;
+                      const isSelectedTo = manualForm.to_warehouse === wh.warehouse_id;
+                      return (
+                        <div
+                          key={wh.warehouse_id}
+                          className={cn(
+                            "p-2.5 rounded-lg border transition-colors",
+                            isSelectedFrom
+                              ? "border-red-500/50 bg-red-950/20"
+                              : isSelectedTo
+                              ? "border-green-500/50 bg-green-950/20"
+                              : "border-buddy-border bg-buddy-bg"
+                          )}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-medium text-buddy-text">{wh.warehouse_id}</span>
+                            {(isSelectedFrom || isSelectedTo) && (
+                              <span className={cn("text-[10px] px-1.5 py-0.5 rounded-full font-medium", isSelectedFrom ? "bg-red-500/20 text-red-400" : "bg-green-500/20 text-green-400")}>
+                                {isSelectedFrom ? "Source" : "Dest"}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-lg font-bold text-buddy-text">{formatNumber(available)}</div>
+                          <div className="text-[10px] text-buddy-muted">
+                            {reserved > 0 && <span className="text-blue-400">Res: {reserved}</span>}
+                            {reserved > 0 && inbound > 0 && " · "}
+                            {inbound > 0 && <span className="text-amber-400">In: {inbound}</span>}
+                            {reserved === 0 && inbound === 0 && "Available"}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               <div className="flex items-center gap-3 mt-4">
                 <Button
