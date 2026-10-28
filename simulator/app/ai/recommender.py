@@ -345,6 +345,7 @@ def _impact(ctx, pos, transfers):
             "shortage_exposure_aed": round(b["lost_aed"], 2),
             "transfer_cost_aed": 0.0,
             "excess_holding_aed": round(b["excess_hold"], 2),
+            "holding_cost_aed": round(b["excess_hold"], 2),
             "net_position_aed": round(b_net, 2),
             "units_at_risk": round(b["lost_units"], 1),
             "service_level_pct": round(b["fill"], 1),
@@ -355,6 +356,7 @@ def _impact(ctx, pos, transfers):
             "shortage_exposure_aed": round(a["lost_aed"], 2),
             "transfer_cost_aed": round(t_cost, 2),
             "excess_holding_aed": round(a["excess_hold"], 2),
+            "holding_cost_aed": round(a["excess_hold"], 2),
             "net_position_aed": round(a_net, 2),
             "units_at_risk": round(a["lost_units"], 1),
             "service_level_pct": round(a["fill"], 1),
@@ -363,6 +365,7 @@ def _impact(ctx, pos, transfers):
             "shortage_reduction_aed": round(b["lost_aed"] - a["lost_aed"], 2),
             "shortage_reduction_pct": round(100 * (b["lost_aed"] - a["lost_aed"]) / b["lost_aed"], 1) if b["lost_aed"] > 0 else 0,
             "net_benefit_aed": round(a_net - b_net, 2),
+            "holding_cost_savings_aed": round(b["excess_hold"] - a["excess_hold"], 2),
             "service_level_delta_pct": round(a["fill"] - b["fill"], 1),
         },
     }

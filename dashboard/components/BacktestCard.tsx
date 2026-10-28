@@ -52,6 +52,31 @@ export function BacktestCard() {
           </div>
         )}
       </div>
+      {Array.isArray(bt.per_series) && bt.per_series.length > 0 && (
+        <div className="mt-3">
+          <p className="text-xs text-buddy-muted mb-1">Per SKU / location (forecast vs actual, 30 days):</p>
+          <div className="flex flex-wrap gap-2">
+            {[...bt.per_series]
+              .map((r: any) => ({ ...r, err: r.actual > 0 ? Math.abs(r.model - r.actual) / r.actual : 0 }))
+              .sort((a: any, b: any) => a.err - b.err)
+              .map((r: any) => (
+                <span
+                  key={`${r.sku_id}-${r.warehouse_id}`}
+                  title={`forecast ${r.model} · baseline ${r.baseline} · actual ${r.actual}`}
+                  className={`text-xs px-2 py-1 rounded border ${
+                    r.err <= 0.15
+                      ? "bg-green-950/30 border-green-900/50 text-green-400"
+                      : r.err <= 0.3
+                      ? "bg-yellow-950/30 border-yellow-900/50 text-yellow-400"
+                      : "bg-red-950/30 border-red-900/50 text-red-400"
+                  }`}
+                >
+                  {r.sku_id} @ {r.warehouse_id}: {Math.round(100 * (1 - r.err))}%
+                </span>
+              ))}
+          </div>
+        </div>
+      )}
     </Card>
   );
 }

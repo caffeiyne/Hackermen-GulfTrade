@@ -152,6 +152,15 @@ class ManualTransferRequest(BaseModel):
     approved_by: str = Field(default="Sara", description="Who authorized the transfer")
 
 
+class InventoryCorrectionRequest(BaseModel):
+    """Body for correcting an inventory stock record — Sara fixes a discrepancy."""
+    sku_id: str
+    warehouse_id: str
+    new_available_qty: int = Field(ge=0, description="Corrected available quantity")
+    reason: str = Field(description="Why the correction is being made (e.g. cycle count, damaged goods)")
+    corrected_by: str = Field(default="Sara", description="Who made the correction")
+
+
 # ---------------------------------------------------------------------------
 # Disruptions
 # ---------------------------------------------------------------------------

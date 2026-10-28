@@ -10,7 +10,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException
 
 from app.db import get_conn, notify_event
-from app.models import InboundOrder, TransferProposal, TransferDecision, ManualTransferRequest
+from app.models import InboundOrder, TransferProposal, TransferDecision, ManualTransferRequest, InventoryCorrectionRequest
 
 orders_router = APIRouter()
 
@@ -550,6 +550,91 @@ async def create_manual_transfer(req: ManualTransferRequest):
         "transfer_cost": float(transfer_cost),
         "lead_time_days": lead_time_days,
         "message": f"Manual transfer executed: {qty} units of {req.sku_id} moved from {req.from_warehouse} to {req.to_warehouse}",
+    }
+
+
+@orders_router.post("/inventory/correct")
+async def correct_inventory(req: InventoryCorrectionRequest):
+    """
+    Sara corrects a stock record — fixes a discrepancy she found (e.g. cycle count,
+    damaged goods, system error). The correction triggers a full agent re-analysis:
+    forecast → imbalance detection → recommendations all update automatically.
+
+    This is the "correct once, full pipeline re-runs" flow.
+    """
+    async with get_conn() as conn:
+        # Get the old value for audit
+        old = await conn.fetchrow(
+            """
+            SELECT available_qty, reserved_qty, safety_stock, inbound_qty
+            FROM inventory.stock_levels
+            WHERE sku_id = $1 AND warehouse_id = $2
+            """,
+            req.sku_id, req.warehouse_id,
+        )
+        if not old:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No stock record found for {req.sku_id} at {req.warehouse_id}",
+            )
+
+        old_qty = old["available_qty"]
+
+        # Update the stock level
+        await conn.execute(
+            """
+            UPDATE inventory.stock_levels
+            SET available_qty = $1, updated_at = now()
+            WHERE sku_id = $2 AND warehouse_id = $3
+            """,
+            req.new_available_qty, req.sku_id, req.warehouse_id,
+        )
+
+        # Audit log
+        await conn.execute(
+            """
+            INSERT INTO events.audit_log (event_type, event_data, sim_timestamp)
+            VALUES ('inventory_corrected', $1, $2)
+            """,
+            json.dumps({
+                "sku_id": req.sku_id,
+                "warehouse_id": req.warehouse_id,
+                "old_qty": old_qty,
+                "new_qty": req.new_available_qty,
+                "reason": req.reason,
+                "corrected_by": req.corrected_by,
+            }),
+            date.today(),
+        )
+
+    # Notify via WebSocket
+    await notify_event("inventory_corrected", {
+        "sku_id": req.sku_id,
+        "warehouse_id": req.warehouse_id,
+        "old_qty": old_qty,
+        "new_qty": req.new_available_qty,
+        "reason": req.reason,
+        "corrected_by": req.corrected_by,
+    })
+
+    # Trigger the agent to re-run its full reasoning cycle
+    # (forecast → imbalance → recommendations all refresh)
+    from app.ai.agent import agent
+    import asyncio
+    asyncio.create_task(agent.react_to_event("inventory_corrected", {"sku_id": req.sku_id, "warehouse_id": req.warehouse_id}))
+
+    return {
+        "status": "corrected",
+        "sku_id": req.sku_id,
+        "warehouse_id": req.warehouse_id,
+        "old_qty": old_qty,
+        "new_qty": req.new_available_qty,
+        "reason": req.reason,
+        "message": (
+            f"Stock corrected: {req.sku_id} at {req.warehouse_id} "
+            f"changed from {old_qty} to {req.new_available_qty}. "
+            f"Agent re-analyzing — forecasts, imbalances, and recommendations will update shortly."
+        ),
     }
 
 

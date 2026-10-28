@@ -161,6 +161,17 @@ export const api = {
       method: "POST",
     }),
 
+  correctInventory: (data: {
+    sku_id: string;
+    warehouse_id: string;
+    new_available_qty: number;
+    reason: string;
+  }) =>
+    fetchAPI(`/api/orders/inventory/correct`, {
+      method: "POST",
+      body: JSON.stringify({ ...data, corrected_by: "Sara" }),
+    }),
+
   // --- Disruptions ---
   getDisruptions: (activeOnly?: boolean) =>
     fetchAPI<Disruption[]>(`/api/disruptions${activeOnly ? "?active_only=true" : ""}`),
@@ -172,6 +183,8 @@ export const api = {
     ),
 
   getForecasts: () => fetchAPI<ForecastResult[]>("/api/recommendations/forecasts"),
+
+  getBacktest: () => fetchAPI<any>("/api/recommendations/backtest"),
 
   getImbalances: () => fetchAPI<ImbalanceFlag[]>("/api/recommendations/imbalances"),
 
@@ -214,8 +227,6 @@ export const api = {
     warehouseId: string,
     data: { available_qty?: number; reserved_qty?: number; safety_stock?: number; inbound_qty?: number; note?: string; corrected_by?: string }
   ) => fetchAPI<StockLevel>(`/api/inventory/${skuId}/${warehouseId}`, { method: "PATCH", body: JSON.stringify(data) }),
-
-  getBacktest: () => fetchAPI<any>("/api/recommendations/backtest"),
 
   getTimeline: (limit: number = 100) =>
     fetchAPI<AuditLogEntry[]>(`/api/simulator/timeline?limit=${limit}`),

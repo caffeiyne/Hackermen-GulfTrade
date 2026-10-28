@@ -99,6 +99,7 @@ class InventoryAgent:
             "simulator_resumed",
             "record_corrected",
             "assumption_changed",
+            "inventory_corrected",
         }
 
         if event_type not in reactive_events:
@@ -460,6 +461,7 @@ class InventoryAgent:
             "react:simulator_resumed": "Simulation resumed — picking up where I left off.",
             "react:record_corrected": "Sara corrected a stock record — I've recomputed the forecast position, imbalances, recommendations and impact.",
             "react:assumption_changed": "Sara changed a disruption assumption — everything downstream has been recomputed.",
+            "react:inventory_corrected": "Sara corrected a stock record — I'm re-running the full analysis with the updated inventory.",
         }
         lines.append(trigger_map.get(trigger, f"Triggered by: {trigger}"))
         lines.append("")

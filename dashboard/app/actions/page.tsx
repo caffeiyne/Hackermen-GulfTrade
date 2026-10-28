@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, Check, X, DollarSign, TrendingUp, Loader2, AlertCircle, Truck, ExternalLink, Clock, Plus, Hand, RotateCcw, BarChart3, Package } from "lucide-react";
+import { ArrowRight, Check, X, DollarSign, TrendingUp, Loader2, AlertCircle, Truck, ExternalLink, Clock, Plus, Hand, RotateCcw, BarChart3, Package, Edit3 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -48,6 +48,19 @@ export default function ActionsPage() {
   const [manualTransferId, setManualTransferId] = useState<string | null>(null);
   const [manualCancelling, setManualCancelling] = useState(false);
   const [manualCancelled, setManualCancelled] = useState(false);
+
+  // --- Inventory correction state ---
+  const [showCorrectPanel, setShowCorrectPanel] = useState(false);
+  const [correctForm, setCorrectForm] = useState({
+    sku_id: "",
+    warehouse_id: "",
+    new_available_qty: 0,
+    reason: "",
+  });
+  const [correctLoading, setCorrectLoading] = useState(false);
+  const [correctError, setCorrectError] = useState<string | null>(null);
+  const [correctSuccess, setCorrectSuccess] = useState<string | null>(null);
+  const [correctStockData, setCorrectStockData] = useState<StockLevel | null>(null);
 
   const RETENTION_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -191,6 +204,61 @@ export default function ActionsPage() {
     }
   };
 
+  // Fetch current stock for the selected SKU/warehouse in the correction panel
+  useEffect(() => {
+    if (!correctForm.sku_id || !correctForm.warehouse_id) {
+      setCorrectStockData(null);
+      return;
+    }
+    const fetchStock = async () => {
+      try {
+        const data = await api.getStockLevels(correctForm.warehouse_id, correctForm.sku_id);
+        const stock = data.find((s) => s.warehouse_id === correctForm.warehouse_id);
+        setCorrectStockData(stock || null);
+        if (stock && correctForm.new_available_qty === 0) {
+          setCorrectForm((prev) => ({ ...prev, new_available_qty: stock.available_qty }));
+        }
+      } catch {
+        setCorrectStockData(null);
+      }
+    };
+    fetchStock();
+  }, [correctForm.sku_id, correctForm.warehouse_id]);
+
+  const handleCorrectSubmit = async () => {
+    setCorrectError(null);
+    setCorrectSuccess(null);
+    if (!correctForm.sku_id || !correctForm.warehouse_id) {
+      setCorrectError("Please select a SKU and warehouse");
+      return;
+    }
+    if (correctForm.new_available_qty < 0) {
+      setCorrectError("Quantity cannot be negative");
+      return;
+    }
+    if (!correctForm.reason.trim()) {
+      setCorrectError("Please provide a reason for the correction");
+      return;
+    }
+    setCorrectLoading(true);
+    try {
+      const result = await api.correctInventory({
+        sku_id: correctForm.sku_id,
+        warehouse_id: correctForm.warehouse_id,
+        new_available_qty: correctForm.new_available_qty,
+        reason: correctForm.reason,
+      }) as any;
+      setCorrectSuccess(result.message || "Stock corrected — agent re-analyzing");
+      setCorrectForm({ sku_id: "", warehouse_id: "", new_available_qty: 0, reason: "" });
+      setCorrectStockData(null);
+      await load();
+    } catch (err: any) {
+      setCorrectError(err.message || "Failed to correct stock");
+    } finally {
+      setCorrectLoading(false);
+    }
+  };
+
   const handleApprove = async (rec: Recommendation) => {
     const recId = rec.recommendation_id;
     setProcessingId(recId);
@@ -305,19 +373,187 @@ export default function ActionsPage() {
               {skuFilter && ` Filtered by SKU: ${skuLabel(skuFilter)}`}
             </p>
           </div>
-          <Button
-            onClick={() => setShowManualPanel((v) => !v)}
-            variant="secondary"
-            size="sm"
-          >
-            {showManualPanel ? (
-              <><X className="w-4 h-4" /> Close Manual</>
-            ) : (
-              <><Hand className="w-4 h-4" /> Manual Transfer</>
-            )}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={() => setShowCorrectPanel((v) => !v)}
+              variant="secondary"
+              size="sm"
+            >
+              {showCorrectPanel ? (
+                <><X className="w-4 h-4" /> Close</>
+              ) : (
+                <><Edit3 className="w-4 h-4" /> Correct Stock</>
+              )}
+            </Button>
+            <Button
+              onClick={() => setShowManualPanel((v) => !v)}
+              variant="secondary"
+              size="sm"
+            >
+              {showManualPanel ? (
+                <><X className="w-4 h-4" /> Close Manual</>
+              ) : (
+                <><Hand className="w-4 h-4" /> Manual Transfer</>
+              )}
+            </Button>
+          </div>
         </div>
       </div>
+
+      {/* Inventory correction panel */}
+      <AnimatePresence>
+        {showCorrectPanel && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.3 }}
+            className="overflow-hidden"
+          >
+            <Card delay={0.05}>
+              <div className="flex items-center gap-2 mb-4">
+                <Edit3 className="w-4 h-4 text-tradeling-400" />
+                <h3 className="font-medium text-buddy-text">Correct Stock Record</h3>
+                <span className="text-xs text-buddy-muted">— fix a discrepancy; agent re-runs the full pipeline automatically</span>
+              </div>
+
+              {correctError && (
+                <div className="p-3 rounded-lg border bg-red-950/30 border-red-900/50 text-red-400 mb-4 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <p className="text-sm">{correctError}</p>
+                </div>
+              )}
+              {correctSuccess && (
+                <div className="p-3 rounded-lg border bg-green-950/30 border-green-900/50 text-green-400 mb-4 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Check className="w-4 h-4 shrink-0" />
+                    <p className="text-sm">{correctSuccess}</p>
+                  </div>
+                  <button onClick={() => setCorrectSuccess(null)} className="opacity-50 hover:opacity-100">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                {/* SKU */}
+                <div>
+                  <label className="text-xs text-buddy-muted block mb-1">SKU</label>
+                  <select
+                    value={correctForm.sku_id}
+                    onChange={(e) => setCorrectForm({ ...correctForm, sku_id: e.target.value, warehouse_id: "", new_available_qty: 0 })}
+                    className="w-full bg-buddy-bg border border-buddy-border rounded-lg px-3 py-2 text-sm text-buddy-text"
+                  >
+                    <option value="">Select SKU...</option>
+                    {skus.map((s) => (
+                      <option key={s.sku_id} value={s.sku_id}>
+                        {s.sku_id} — {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Warehouse */}
+                <div>
+                  <label className="text-xs text-buddy-muted block mb-1">Warehouse</label>
+                  <select
+                    value={correctForm.warehouse_id}
+                    onChange={(e) => setCorrectForm({ ...correctForm, warehouse_id: e.target.value, new_available_qty: 0 })}
+                    className="w-full bg-buddy-bg border border-buddy-border rounded-lg px-3 py-2 text-sm text-buddy-text"
+                    disabled={!correctForm.sku_id}
+                  >
+                    <option value="">Select warehouse...</option>
+                    {warehouses.map((w) => (
+                      <option key={w.warehouse_id} value={w.warehouse_id}>
+                        {w.warehouse_id} — {w.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* New quantity */}
+                <div>
+                  <label className="text-xs text-buddy-muted block mb-1">Corrected Available Qty</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={correctForm.new_available_qty || ""}
+                    onChange={(e) => setCorrectForm({ ...correctForm, new_available_qty: parseInt(e.target.value) || 0 })}
+                    className="w-full bg-buddy-bg border border-buddy-border rounded-lg px-3 py-2 text-sm text-buddy-text"
+                    placeholder="0"
+                  />
+                </div>
+
+                {/* Reason */}
+                <div>
+                  <label className="text-xs text-buddy-muted block mb-1">Reason</label>
+                  <input
+                    type="text"
+                    value={correctForm.reason}
+                    onChange={(e) => setCorrectForm({ ...correctForm, reason: e.target.value })}
+                    className="w-full bg-buddy-bg border border-buddy-border rounded-lg px-3 py-2 text-sm text-buddy-text"
+                    placeholder="e.g. Cycle count, damaged goods..."
+                  />
+                </div>
+              </div>
+
+              {/* Current stock preview */}
+              {correctStockData && (
+                <div className="mt-4 p-3 rounded-lg border border-buddy-border bg-buddy-bg/50">
+                  <div className="flex items-center gap-2 mb-2">
+                    <BarChart3 className="w-3.5 h-3.5 text-tradeling-400" />
+                    <span className="text-xs text-buddy-muted">
+                      Current record for {correctForm.sku_id} at {correctForm.warehouse_id}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div className="p-2 rounded-lg border border-buddy-border bg-buddy-bg">
+                      <p className="text-[10px] text-buddy-muted">Available</p>
+                      <p className="text-sm font-bold text-buddy-text">{formatNumber(correctStockData.available_qty)}</p>
+                    </div>
+                    <div className="p-2 rounded-lg border border-buddy-border bg-buddy-bg">
+                      <p className="text-[10px] text-buddy-muted">Reserved</p>
+                      <p className="text-sm font-bold text-buddy-text">{formatNumber(correctStockData.reserved_qty)}</p>
+                    </div>
+                    <div className="p-2 rounded-lg border border-buddy-border bg-buddy-bg">
+                      <p className="text-[10px] text-buddy-muted">Safety Stock</p>
+                      <p className="text-sm font-bold text-buddy-text">{formatNumber(correctStockData.safety_stock)}</p>
+                    </div>
+                    <div className="p-2 rounded-lg border border-buddy-border bg-buddy-bg">
+                      <p className="text-[10px] text-buddy-muted">Inbound</p>
+                      <p className="text-sm font-bold text-buddy-text">{formatNumber(correctStockData.inbound_qty)}</p>
+                    </div>
+                  </div>
+                  {correctForm.new_available_qty !== correctStockData.available_qty && (
+                    <p className="text-xs text-amber-400 mt-2 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      Changing from {formatNumber(correctStockData.available_qty)} → {formatNumber(correctForm.new_available_qty)} units
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div className="flex items-center gap-3 mt-4">
+                <Button
+                  onClick={handleCorrectSubmit}
+                  disabled={correctLoading}
+                  size="sm"
+                >
+                  {correctLoading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Edit3 className="w-4 h-4" />
+                  )}
+                  {correctLoading ? "Correcting..." : "Apply Correction"}
+                </Button>
+                <span className="text-xs text-buddy-muted">
+                  Agent will re-run forecast → imbalance → recommendations automatically
+                </span>
+              </div>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Manual transfer panel */}
       <AnimatePresence>
@@ -617,7 +853,7 @@ export default function ActionsPage() {
                 )}
                 <div className="flex justify-between text-xs pt-2 border-t border-buddy-border">
                   <span className="text-buddy-muted font-medium">Total expected cost</span>
-                  <span className="font-bold text-red-400">{formatCurrency(baselineComparison.baseline.net_position_aed)}</span>
+                  <span className="font-bold text-red-400">{formatCurrency(-baselineComparison.baseline.net_position_aed)}</span>
                 </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-buddy-muted">Expected units short</span>
@@ -654,7 +890,7 @@ export default function ActionsPage() {
                 )}
                 <div className="flex justify-between text-xs pt-2 border-t border-tradeling-800/30">
                   <span className="text-buddy-muted font-medium">Total expected cost</span>
-                  <span className="font-bold text-tradeling-400">{formatCurrency(baselineComparison.ai_solution.net_position_aed)}</span>
+                  <span className="font-bold text-tradeling-400">{formatCurrency(-baselineComparison.ai_solution.net_position_aed)}</span>
                 </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-buddy-muted">Expected units short</span>
@@ -688,6 +924,14 @@ export default function ActionsPage() {
                   {formatCurrency(baselineComparison.improvement.net_benefit_aed)}
                 </span>
               </div>
+              {baselineComparison.improvement.holding_cost_savings_aed > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-buddy-muted">Holding cost saved</span>
+                  <span className="text-sm font-bold text-tradeling-400">
+                    {formatCurrency(baselineComparison.improvement.holding_cost_savings_aed)}
+                  </span>
+                </div>
+              )}
               {baselineComparison.improvement.service_level_delta_pct > 0 && (
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-buddy-muted">Fill rate +</span>

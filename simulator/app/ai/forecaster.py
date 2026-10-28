@@ -215,3 +215,4 @@ def _empty_forecast(sku_id: str, warehouse_id: str, sim_date: date):
         "history_window": None,
         "data_as_of": None,
     }
+
