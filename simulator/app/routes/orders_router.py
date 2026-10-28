@@ -148,8 +148,17 @@ async def approve_recommendation(recommendation_id: str, decision: TransferDecis
     to_wh = parts[-1]
     sku_id = "-".join(parts[1:-2])
 
+    # Re-derive the CURRENT recommendation so approval uses today's numbers,
+    # never a stale proposal or a guessed quantity.
+    from app.ai.recommender import generate_recommendations
+    current = await generate_recommendations()
+    rec = next((r for r in current["recommendations"] if r["recommendation_id"] == recommendation_id), None)
+    if rec is None:
+        raise HTTPException(status_code=409, detail="This recommendation is no longer current — the plan has changed. Refresh and review again.")
+    if not rec["is_feasible"]:
+        raise HTTPException(status_code=409, detail=f"Not approvable: {rec.get('rejection_reason') or 'not recommended'}")
+
     async with get_conn() as conn:
-        # Check source has enough stock
         source_stock = await conn.fetchrow(
             """
             SELECT available_qty, reserved_qty, safety_stock
@@ -160,52 +169,46 @@ async def approve_recommendation(recommendation_id: str, decision: TransferDecis
         )
         if not source_stock:
             raise HTTPException(status_code=404, detail=f"No stock record for {sku_id} at {from_wh}")
+        if source_stock["available_qty"] - source_stock["reserved_qty"] < rec["quantity"]:
+            raise HTTPException(status_code=409, detail="Source no longer has enough unreserved stock — refresh the plan.")
 
-        # Get the recommendation details from the transfers table or re-derive
-        # Check if a proposal already exists
         existing = await conn.fetchrow(
             """
             SELECT * FROM orders.transfers
             WHERE sku_id = $1 AND from_warehouse = $2 AND to_warehouse = $3
-              AND status IN ('proposed', 'approved', 'in_transit', 'completed')
+              AND status = 'proposed'
             ORDER BY created_at DESC LIMIT 1
             """,
             sku_id, from_wh, to_wh,
         )
 
         if existing:
-            if existing["status"] == "proposed":
-                # Approve the existing proposal
-                transfer = await conn.fetchrow(
-                    """
-                    UPDATE orders.transfers
-                    SET status = 'approved', approved_by = $1, approved_at = now(),
-                        updated_at = now()
-                    WHERE transfer_id = $2
-                    RETURNING *
-                    """,
-                    decision.approved_by, existing["transfer_id"],
-                )
-            else:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Transfer already {existing['status']}"
-                )
+            transfer = await conn.fetchrow(
+                """
+                UPDATE orders.transfers
+                SET status = 'approved', approved_by = $1, approved_at = now(),
+                    quantity = $2, transfer_cost = $3, lead_time_days = $4,
+                    expected_benefit = $5, net_benefit = $6, reason = $7,
+                    updated_at = now()
+                WHERE transfer_id = $8
+                RETURNING *
+                """,
+                decision.approved_by, rec["quantity"], rec["transfer_cost"], rec["lead_time_days"],
+                rec["expected_benefit"], rec["net_benefit"], rec["reason"], existing["transfer_id"],
+            )
         else:
-            # Create a new approved transfer directly
             transfer = await conn.fetchrow(
                 """
                 INSERT INTO orders.transfers
                     (sku_id, from_warehouse, to_warehouse, quantity,
-                     transfer_cost, lead_time_days, reason, status,
-                     approved_by, approved_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, 'approved', $8, now())
+                     transfer_cost, lead_time_days, reason, expected_benefit, net_benefit,
+                     status, approved_by, approved_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'approved', $10, now())
                 RETURNING *
                 """,
-                sku_id, from_wh, to_wh,
-                source_stock["available_qty"] - source_stock["safety_stock"],  # max transferable
-                0,  # cost — will be updated if route exists
-                f"Approved from Actions page by {decision.approved_by}",
+                sku_id, from_wh, to_wh, rec["quantity"],
+                rec["transfer_cost"], rec["lead_time_days"], rec["reason"],
+                rec["expected_benefit"], rec["net_benefit"],
                 decision.approved_by,
             )
 

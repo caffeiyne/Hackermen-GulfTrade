@@ -209,54 +209,106 @@ class ScenarioRunner:
                 )
 
     async def _process_sim_day(self):
-        """Generate sales and update inventory for the current sim day."""
+        """
+        One simulated day:
+          1. Receive inbound POs whose (disruption-adjusted) ETA has arrived
+          2. Draw demand from the same profiles as the 90-day history
+             (UAE Fri/Sat weekend, trend, noise; x supplied demand surge if active)
+          3. Sell min(demand, unreserved stock) — when demand exceeds stock the
+             day is recorded as a STOCKOUT, so censored history emerges naturally
+        """
         if not self.sim_clock:
             return
+        from app.ai.planning import adjusted_eta, SURGE_MULTIPLIER
 
         async with get_conn() as conn:
-            for (sku_id, warehouse_id), profile in DEMAND_PROFILES.items():
-                # Don't generate for every SKU every day (performance) — sample ~60%
-                if random.random() > 0.6:
+            disruptions = [dict(r) for r in await conn.fetch(
+                """
+                SELECT disruption_type, title, affected_skus, affected_routes, severity, end_date
+                FROM events.disruptions
+                WHERE is_active = TRUE
+                  AND $1::date BETWEEN start_date AND COALESCE(end_date, '2099-12-31'::date)
+                """,
+                self.sim_clock,
+            )]
+
+            # 1) inbound arrivals
+            pos = await conn.fetch(
+                """
+                SELECT po_id, sku_id, warehouse_id, quantity, expected_date, revised_date
+                FROM orders.inbound WHERE status IN ('pending', 'in_transit', 'delayed')
+                """
+            )
+            for po in pos:
+                eta, _ = adjusted_eta(po, disruptions, self.sim_clock)
+                if eta > self.sim_clock:
                     continue
-
-                base = profile["base"]
-                # Lower demand during the planning window (30-day forecast period)
-                # since we're in "real-time" now
-                qty = max(0, int(random.gauss(base * 0.8, base * 0.3)))
-                if qty <= 0:
-                    continue
-
-                # Get unit price
-                price_row = await conn.fetchrow(
-                    "SELECT unit_price FROM master.skus WHERE sku_id = $1", sku_id
-                )
-                if not price_row:
-                    continue
-
-                unit_price = float(price_row["unit_price"])
-                buyer_id = random.choice(BUYER_IDS)
-
-                # Insert sale
                 await conn.execute(
-                    """
-                    INSERT INTO sales.transactions (sku_id, warehouse_id, txn_date, quantity, unit_price, buyer_id, is_stockout)
-                    VALUES ($1, $2, $3, $4, $5, $6, FALSE)
-                    """,
-                    sku_id, warehouse_id, self.sim_clock, qty, unit_price, buyer_id,
+                    "UPDATE orders.inbound SET status = 'received' WHERE po_id = $1", po["po_id"],
                 )
-
-                # Reduce inventory
                 await conn.execute(
                     """
                     UPDATE inventory.stock_levels
-                    SET available_qty = GREATEST(0, available_qty - $1),
+                    SET available_qty = available_qty + $1,
+                        inbound_qty = GREATEST(0, inbound_qty - $1),
                         updated_at = now()
                     WHERE sku_id = $2 AND warehouse_id = $3
                     """,
-                    qty, sku_id, warehouse_id,
+                    po["quantity"], po["sku_id"], po["warehouse_id"],
+                )
+                await conn.execute(
+                    "INSERT INTO events.audit_log (event_type, event_data, sim_timestamp) VALUES ('inbound_received', $1, $2)",
+                    json.dumps({"po_id": po["po_id"], "sku_id": po["sku_id"],
+                                "warehouse_id": po["warehouse_id"], "quantity": po["quantity"]}),
+                    self.sim_clock,
                 )
 
-                # Audit log
+            surge = {}
+            for d in disruptions:
+                if d["disruption_type"] == "demand_surge":
+                    for sku in d["affected_skus"] or []:
+                        surge[sku] = max(surge.get(sku, 1.0), SURGE_MULTIPLIER.get(d["severity"], 2.0))
+
+            prices = {r["sku_id"]: float(r["unit_price"]) for r in await conn.fetch("SELECT sku_id, unit_price FROM master.skus")}
+            stock = {
+                (r["sku_id"], r["warehouse_id"]): r["available_qty"] - r["reserved_qty"]
+                for r in await conn.fetch("SELECT sku_id, warehouse_id, available_qty, reserved_qty FROM inventory.stock_levels")
+            }
+            weekend = self.sim_clock.weekday() in (4, 5)  # UAE Fri/Sat
+
+            # 2-3) demand and sales
+            for (sku_id, warehouse_id), profile in DEMAND_PROFILES.items():
+                expected = profile["base"] + profile.get("trend", 0) * (90 + self.sim_day)
+                if weekend:
+                    expected *= profile.get("weekend_mult", 1.0)
+                expected *= surge.get(sku_id, 1.0)
+                demand = max(0, int(round(random.gauss(expected, max(1, expected * 0.3)))))
+                if demand <= 0 or sku_id not in prices:
+                    continue
+                sellable = max(0, stock.get((sku_id, warehouse_id), 0))
+                qty = min(demand, sellable)
+                stockout = demand > sellable
+                buyer_id = random.choice(BUYER_IDS)
+
+                await conn.execute(
+                    """
+                    INSERT INTO sales.transactions (sku_id, warehouse_id, txn_date, quantity, unit_price, buyer_id, is_stockout)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    """,
+                    sku_id, warehouse_id, self.sim_clock, qty, prices[sku_id], buyer_id, stockout,
+                )
+                if qty > 0:
+                    await conn.execute(
+                        """
+                        UPDATE inventory.stock_levels
+                        SET available_qty = GREATEST(0, available_qty - $1),
+                            updated_at = now()
+                        WHERE sku_id = $2 AND warehouse_id = $3
+                        """,
+                        qty, sku_id, warehouse_id,
+                    )
+                    stock[(sku_id, warehouse_id)] = sellable - qty
+
                 await conn.execute(
                     """
                     INSERT INTO events.audit_log (event_type, event_data, sim_timestamp)
@@ -266,7 +318,9 @@ class ScenarioRunner:
                         "sku_id": sku_id,
                         "warehouse_id": warehouse_id,
                         "quantity": qty,
-                        "unit_price": unit_price,
+                        "demand": demand,
+                        "stockout": stockout,
+                        "unit_price": prices[sku_id],
                         "buyer_id": buyer_id,
                     }),
                     self.sim_clock,
@@ -331,7 +385,7 @@ class ScenarioRunner:
                 """
                 UPDATE events.disruptions
                 SET is_active = TRUE
-                WHERE disruption_type = $1 AND is_active = FALSE
+                WHERE disruption_type = $1 AND is_active = FALSE AND source <> 'manual_injection'
                 """,
                 d_type,
             )

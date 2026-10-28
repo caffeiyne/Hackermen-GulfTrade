@@ -7,6 +7,9 @@ from fastapi import APIRouter
 from app.ai.recommender import generate_recommendations
 from app.ai.forecaster import forecast_all
 from app.ai.imbalance_detector import detect_imbalances
+from app.ai.backtest import run_backtest
+from app.ai.planning import load_context
+from app.db import get_conn
 
 recommendations_router = APIRouter()
 
@@ -35,17 +38,31 @@ async def get_imbalances():
 @recommendations_router.get("/full-analysis")
 async def get_full_analysis():
     """
-    Complete decision-support package:
+    Complete decision-support package from ONE consistent snapshot:
     forecasts + imbalances + recommendations + impact assessment.
     """
-    forecasts = await forecast_all()
-    imbalances = await detect_imbalances()
-    recommendations = await generate_recommendations()
+    async with get_conn() as conn:
+        ctx = await load_context(conn)
+    forecasts = await forecast_all(ctx=ctx)
+    imbalances = await detect_imbalances(ctx=ctx, forecasts=forecasts)
+    recommendations = await generate_recommendations(ctx=ctx, forecasts=forecasts)
 
     return {
+        "as_of": str(ctx["sim_date"]),
         "forecasts": forecasts,
         "imbalances": imbalances,
         "recommendations": recommendations["recommendations"],
+        "replenishment_actions": recommendations["replenishment_actions"],
         "impact_assessment": recommendations["impact_assessment"],
+        "baseline_comparison": recommendations["baseline_comparison"],
         "summary": recommendations["summary"],
     }
+
+
+@recommendations_router.get("/backtest")
+async def get_backtest():
+    """
+    Forecast accuracy vs the case-study baseline (recent 30-day average) on a
+    30-day holdout: WAPE, bias, P10–P90 coverage, and stockout-distorted series.
+    """
+    return await run_backtest()

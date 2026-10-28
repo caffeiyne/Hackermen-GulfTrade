@@ -157,14 +157,16 @@ class ManualTransferRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 class DisruptionType(str, Enum):
-    supply_shortage = "supply_shortage"
-    shipping_delay = "shipping_delay"
+    supply_shortage = "supply_shortage"   # inbound POs for listed SKUs slip
+    shipping_delay = "shipping_delay"     # listed routes slow/blocked; listed SKUs' inbound held
+    demand_surge = "demand_surge"         # supplied demand signal for listed SKUs
 
 
 class Severity(str, Enum):
     low = "low"
     medium = "medium"
     high = "high"
+    critical = "critical"                 # for routes: blocked
 
 
 class Disruption(BaseModel):
@@ -179,6 +181,27 @@ class Disruption(BaseModel):
     severity: Severity = Severity.medium
     source: str = "market_signal"
     is_active: bool = True
+
+
+class DisruptionUpdate(BaseModel):
+    """Planner changes a disruption ASSUMPTION — the whole plan is recomputed."""
+    is_active: Optional[bool] = None
+    severity: Optional[Severity] = None
+    end_date: Optional[date] = None
+    affected_skus: Optional[list[str]] = None
+    affected_routes: Optional[list[str]] = None
+    changed_by: str = "Sara"
+    note: Optional[str] = None
+
+
+class StockCorrection(BaseModel):
+    """Planner corrects a stock record (e.g. a late or wrong spreadsheet row)."""
+    available_qty: Optional[int] = Field(default=None, ge=0)
+    reserved_qty: Optional[int] = Field(default=None, ge=0)
+    safety_stock: Optional[int] = Field(default=None, ge=0)
+    inbound_qty: Optional[int] = Field(default=None, ge=0)
+    corrected_by: str = "Sara"
+    note: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

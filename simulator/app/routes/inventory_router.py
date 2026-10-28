@@ -10,10 +10,13 @@ parameter route first and the query fails.
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Query
+import asyncio
+import json
 
-from app.db import get_conn
-from app.models import StockLevel, StockAge
+from fastapi import APIRouter, HTTPException, Query
+
+from app.db import get_conn, notify_event
+from app.models import StockLevel, StockAge, StockCorrection
 
 inventory_router = APIRouter()
 
@@ -122,4 +125,46 @@ async def get_stock_level(sku_id: str, warehouse_id: str):
     if not row:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=f"No stock record for {sku_id} at {warehouse_id}")
+    return dict(row)
+
+
+@inventory_router.patch("/{sku_id}/{warehouse_id}", response_model=StockLevel)
+async def correct_stock_record(sku_id: str, warehouse_id: str, c: StockCorrection):
+    """
+    Correct a stock record once; the agent recomputes forecast-dependent
+    imbalances, recommendations and impact from the corrected value.
+    Every correction is written to the audit log with before/after values.
+    """
+    fields = {k: v for k, v in c.model_dump().items()
+              if k not in ("corrected_by", "note") and v is not None}
+    if not fields:
+        raise HTTPException(status_code=400, detail="Nothing to correct")
+    async with get_conn() as conn:
+        before = await conn.fetchrow(
+            "SELECT * FROM inventory.stock_levels WHERE sku_id = $1 AND warehouse_id = $2",
+            sku_id, warehouse_id,
+        )
+        if not before:
+            raise HTTPException(status_code=404, detail=f"No stock record for {sku_id} at {warehouse_id}")
+        sets, params = [], []
+        for i, (k, v) in enumerate(fields.items(), start=1):
+            sets.append(f"{k} = ${i}")
+            params.append(v)
+        params += [sku_id, warehouse_id]
+        row = await conn.fetchrow(
+            f"UPDATE inventory.stock_levels SET {', '.join(sets)}, updated_at = now() "
+            f"WHERE sku_id = ${len(params) - 1} AND warehouse_id = ${len(params)} RETURNING *",
+            *params,
+        )
+        await conn.execute(
+            "INSERT INTO events.audit_log (event_type, event_data, sim_timestamp) VALUES ('record_corrected', $1, CURRENT_DATE)",
+            json.dumps({
+                "sku_id": sku_id, "warehouse_id": warehouse_id, "corrected_by": c.corrected_by, "note": c.note,
+                "before": {k: before[k] for k in fields}, "after": {k: row[k] for k in fields},
+            }),
+        )
+
+    await notify_event("record_corrected", {"sku_id": sku_id, "warehouse_id": warehouse_id, "fields": list(fields)})
+    from app.ai.agent import agent
+    asyncio.create_task(agent.react_to_event("record_corrected", {"sku_id": sku_id, "warehouse_id": warehouse_id}))
     return dict(row)

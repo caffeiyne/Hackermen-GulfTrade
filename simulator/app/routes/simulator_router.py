@@ -4,6 +4,8 @@ Simulator control routes — start, pause, resume, reset, seek, inject.
 
 from datetime import date
 
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
 
 from app.db import get_conn, notify_event
@@ -12,6 +14,17 @@ from app.models import StartSimulatorRequest, InjectDisruptionRequest
 from app.ai.agent import agent
 
 simulator_router = APIRouter()
+
+# Fallback copy of db/disruptions.sql for container builds that don't ship the db/ folder
+_SEED_DISRUPTIONS_SQL = """
+INSERT INTO events.disruptions (disruption_type, title, description, affected_skus, affected_routes, start_date, end_date, severity, source, is_active) VALUES
+('supply_shortage', 'Semiconductor Supply Constraint — GaN Components',
+ 'Semiconductor suppliers face production constraints for GaN power ICs. Affects GaN chargers (CHG-UC-002, CHG-UC-003) only. Replenishment lead times may extend by 7-14 days.',
+ ARRAY['CHG-UC-003','CHG-UC-002'], NULL, '2024-11-05', '2024-11-20', 'high', 'market_signal', TRUE),
+('shipping_delay', 'Logistics Disruption — DXB-SHJ Route Delay',
+ 'Road works and customs changes delay the Dubai-Sharjah corridor by 2-3 days. DXB-AUH and AUH-SHJ are NOT affected.',
+ ARRAY[]::text[], ARRAY['DXB-SHJ','SHJ-DXB'], '2024-11-10', '2024-11-25', 'medium', 'logistics_alert', TRUE);
+"""
 
 
 @simulator_router.get("/status")
@@ -64,16 +77,23 @@ async def reset_simulator():
 
     async with get_conn() as conn:
         # Clear all simulation-generated transactional data
-        await conn.execute("DELETE FROM sales.transactions")
+        # Keep the 90-day history; remove only what the simulation generated
+        await conn.execute(
+            "DELETE FROM sales.transactions WHERE txn_date >= (SELECT COALESCE(sim_start_date, DATE '2024-10-27') FROM simulator.state WHERE id = 1)"
+        )
         await conn.execute("DELETE FROM orders.transfers")
+        # Remove injected/edited disruptions, then restore the two labelled seed scenarios
         await conn.execute("DELETE FROM events.disruptions")
+        await conn.execute((Path(__file__).resolve().parents[3] / "db" / "disruptions.sql").read_text(encoding="utf-8")
+                           if (Path(__file__).resolve().parents[3] / "db" / "disruptions.sql").exists()
+                           else _SEED_DISRUPTIONS_SQL)
         await conn.execute("DELETE FROM events.audit_log")
         await conn.execute("DELETE FROM inventory.stock_age")
 
         # Reset simulator state to idle at start date
         await conn.execute(
             "UPDATE simulator.state "
-            "SET status = 'idle', sim_clock = sim_start_date, "
+            "SET status = 'idle', sim_clock = COALESCE(sim_start_date, DATE '2024-10-27'), "
             "scenario_name = NULL, speed_multiplier = 1, "
             "started_at = NULL, updated_at = now() "
             "WHERE id = 1"
