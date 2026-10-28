@@ -593,7 +593,7 @@ export default function AnalyticsPage() {
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#1e242d" horizontal={false} />
                       <XAxis type="number" stroke="#6b7280" fontSize={10} />
-                      <YAxis type="category" dataKey="sku_id" stroke="#6b7280" fontSize={9} width={80} />
+                      <YAxis type="category" dataKey="name" stroke="#6b7280" fontSize={9} width={100} />
                       <Tooltip content={<DarkTooltip />} cursor={{ fill: "#1e242d40" }} />
                       <Bar dataKey="available" name="Available" fill={WAREHOUSE_COLORS[selectedWarehouse!] || COLORS.tradeling} radius={[0, 4, 4, 0]} barSize={14} />
                       <Bar dataKey="inbound" name="Inbound" fill={COLORS.blue} radius={[0, 4, 4, 0]} barSize={14} />
