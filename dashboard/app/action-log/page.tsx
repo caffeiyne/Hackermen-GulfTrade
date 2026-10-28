@@ -14,9 +14,11 @@ import {
   Clock,
   Filter,
   RotateCcw,
+  Loader2,
 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import { api } from "@/lib/api";
 import { formatCurrency, formatNumber } from "@/lib/utils";
 import type { TransferProposal, StockLevel, Warehouse } from "@/lib/types";
@@ -47,6 +49,7 @@ export default function ActionLogPage() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -123,6 +126,18 @@ export default function ActionLogPage() {
       });
     } catch {
       return ts;
+    }
+  };
+
+  const handleCancel = async (transferId: string) => {
+    setCancellingId(transferId);
+    try {
+      await api.cancelTransfer(transferId);
+      await loadData();
+    } catch (err) {
+      console.error("Failed to cancel transfer:", err);
+    } finally {
+      setCancellingId(null);
     }
   };
 
@@ -286,6 +301,24 @@ export default function ActionLogPage() {
                         <Badge variant={isCancelled ? "warning" : isApproved ? "success" : "danger"}>
                           {transfer.status}
                         </Badge>
+                        {transfer.status === "completed" && (
+                          <Button
+                            onClick={(e: any) => {
+                              e.stopPropagation();
+                              handleCancel(transfer.transfer_id);
+                            }}
+                            disabled={cancellingId === transfer.transfer_id}
+                            variant="secondary"
+                            size="sm"
+                          >
+                            {cancellingId === transfer.transfer_id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <RotateCcw className="w-3.5 h-3.5" />
+                            )}
+                            {cancellingId === transfer.transfer_id ? "Cancelling..." : "Cancel"}
+                          </Button>
+                        )}
                       </div>
                     </div>
 
