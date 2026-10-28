@@ -319,7 +319,7 @@ export default function ActionLogPage() {
                           <Button
                             onClick={(e: any) => {
                               e.stopPropagation();
-                              handleCancel(transfer.transfer_id);
+                              if (transfer.transfer_id) handleCancel(transfer.transfer_id);
                             }}
                             disabled={cancellingId === transfer.transfer_id}
                             variant="secondary"

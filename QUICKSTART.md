@@ -1,6 +1,38 @@
 # Tradeling Hackathon — Quick Start
 
-## 5-Minute Setup (Supabase + Local Dev)
+## Option A: Docker (One Command — Recommended)
+
+### Prerequisites
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
+
+### Steps
+
+```powershell
+git clone https://github.com/caffeiyne/Hackermen-GulfTrade.git
+cd Hackermen-GulfTrade
+docker compose up
+```
+
+That's it. Docker will:
+1. Start PostgreSQL with schema + seed data (20 SKUs, 3 warehouses, disruptions)
+2. Generate 90 days of sales history
+3. Start the FastAPI backend on port 8000
+4. Start the Next.js dashboard on port 3000
+
+First run takes ~3-5 minutes (building images). Subsequent runs take ~30 seconds.
+
+Open:
+- **Dashboard:** http://localhost:3000
+- **API docs:** http://localhost:8000/docs
+- **pgAdmin (optional):** http://localhost:5050 (admin@tradling.com / admin)
+
+To stop: `Ctrl+C` or `docker compose down`
+
+---
+
+## Option B: Manual Setup (Supabase + Local Dev)
+
+### 5-Minute Setup
 
 ### Step 1: Create a Supabase Database (2 min)
 

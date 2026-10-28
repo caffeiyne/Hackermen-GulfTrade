@@ -167,7 +167,7 @@ export const api = {
 
   // --- AI ---
   getRecommendations: () =>
-    fetchAPI<{ recommendations: Recommendation[]; impact_assessment: ImpactAssessment[]; summary: any }>(
+    fetchAPI<{ recommendations: Recommendation[]; impact_assessment: ImpactAssessment[]; summary: any; baseline_comparison?: any }>(
       "/api/recommendations"
     ),
 

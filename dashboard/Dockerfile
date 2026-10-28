@@ -11,11 +11,8 @@ RUN npm install
 # Copy application code
 COPY . .
 
-# Build
-RUN npm run build
-
 # Expose port
 EXPOSE 3000
 
-# Start
-CMD ["npm", "start"]
+# Start dev server — binds to 0.0.0.0 so it's reachable on the LAN
+CMD ["npm", "run", "dev", "--", "--hostname", "0.0.0.0"]
