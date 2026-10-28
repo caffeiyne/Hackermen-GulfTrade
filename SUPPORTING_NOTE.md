@@ -100,6 +100,20 @@ The agent is **not a pipeline** — it's an autonomous reasoning loop:
 
 The agent re-evaluates within 1 second when a black swan event is injected.
 
+### 3.6 Scaling Strategy (Production)
+
+The current agent re-runs the full reasoning cycle (forecast + detect + recommend) every 30 seconds. This is appropriate for 20 SKUs × 3 warehouses = 60 combinations.
+
+For production scale (10,000+ SKUs × 50+ warehouses), the agent would switch to **incremental processing**:
+
+- **Event-driven triggers**: Only re-forecast when new sales data arrives for a SKU, rather than re-scanning the entire catalog on every cycle
+- **Disruption-scoped re-evaluation**: Only re-evaluate warehouses/SKUs affected by a new disruption, not the entire inventory graph
+- **Cached forecasts**: Store 30-day forecasts with a TTL; only regenerate when underlying sales data or disruption state changes
+- **Batch processing**: Low-priority SKUs (no imbalance, no disruption) run on hourly batches; high-priority SKUs (active shortage/disruption) run in real-time
+- **Partitioned computation**: Forecasting is embarrassingly parallel — each SKU/warehouse combination is independent and can be distributed across worker processes
+- **Database scaling**: Partition sales and inventory tables by warehouse; use read replicas for the agent's observation queries to avoid contention with transactional writes
+- **Horizontal scaling**: Multiple agent workers each handle a shard of the SKU catalog; a coordinator dispatches disruption events to only the affected shards
+
 ---
 
 ## 4. Test Results

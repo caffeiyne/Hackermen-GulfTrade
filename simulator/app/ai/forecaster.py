@@ -237,3 +237,159 @@ def _empty_forecast(sku_id: str, warehouse_id: str, sim_date: date):
         "assumptions": ["No historical sales data available"],
         "data_quality_notes": ["No sales records found for this SKU/warehouse"],
     }
+
+
+async def backtest_all():
+    """
+    Backtest the WMA forecast against historical data.
+
+    Uses the first 60 days of history to forecast days 61-90,
+    then compares the forecast to actuals to compute MAPE (Mean Absolute
+    Percentage Error) per SKU/warehouse and an aggregate accuracy score.
+
+    Returns:
+      {
+        "results": [{sku_id, warehouse_id, mape, accuracy, actual_30d, forecast_30d}],
+        "aggregate": {"avg_mape": float, "avg_accuracy": float, "combos_tested": int}
+      }
+    """
+    async with get_conn() as conn:
+        sim_state = await conn.fetchrow("SELECT sim_clock FROM simulator.state WHERE id = 1")
+        sim_date = sim_state["sim_clock"] if sim_state and sim_state["sim_clock"] else date.today()
+
+        combos = await conn.fetch(
+            """
+            SELECT DISTINCT sl.sku_id, sl.warehouse_id
+            FROM inventory.stock_levels sl
+            ORDER BY sl.sku_id, sl.warehouse_id
+            """
+        )
+
+        results = []
+        for combo in combos:
+            bt = await _backtest_single(conn, combo["sku_id"], combo["warehouse_id"], sim_date)
+            if bt:
+                results.append(bt)
+
+    # Aggregate
+    valid = [r for r in results if r["mape"] is not None]
+    if valid:
+        avg_mape = sum(r["mape"] for r in valid) / len(valid)
+    else:
+        avg_mape = None
+
+    avg_accuracy = (100 - avg_mape) if avg_mape is not None else None
+
+    return {
+        "results": results,
+        "aggregate": {
+            "avg_mape": round(avg_mape, 1) if avg_mape is not None else None,
+            "avg_accuracy": round(avg_accuracy, 1) if avg_accuracy is not None else None,
+            "combos_tested": len(valid),
+        },
+    }
+
+
+async def _backtest_single(conn, sku_id: str, warehouse_id: str, sim_date: date):
+    """Backtest WMA forecast for a single SKU/warehouse.
+
+    Train window: days -90 to -31 (60 days)
+    Test window:  days -30 to -1  (30 days)
+    Compare forecast_30d to actual sum of the test window.
+    """
+    train_end = sim_date - timedelta(days=31)
+    train_start = sim_date - timedelta(days=90)
+    test_start = sim_date - timedelta(days=30)
+
+    # Fetch all 90 days
+    rows = await conn.fetch(
+        """
+        SELECT txn_date, quantity, is_stockout
+        FROM sales.transactions
+        WHERE sku_id = $1 AND warehouse_id = $2
+          AND txn_date >= $3 AND txn_date <= $4
+        ORDER BY txn_date
+        """,
+        sku_id, warehouse_id, train_start, sim_date - timedelta(days=1),
+    )
+
+    if len(rows) < 40:
+        return {
+            "sku_id": sku_id,
+            "warehouse_id": warehouse_id,
+            "mape": None,
+            "accuracy": None,
+            "actual_30d": None,
+            "forecast_30d": None,
+            "note": "Insufficient data for backtest",
+        }
+
+    # Split into train and test
+    train_data = {}
+    test_data = {}
+    for r in rows:
+        d = r["txn_date"]
+        if d <= train_end:
+            train_data[d] = r["quantity"]
+        elif d >= test_start:
+            test_data[d] = r["quantity"]
+
+    if len(test_data) < 10:
+        return {
+            "sku_id": sku_id,
+            "warehouse_id": warehouse_id,
+            "mape": None,
+            "accuracy": None,
+            "actual_30d": None,
+            "forecast_30d": None,
+            "note": "Insufficient test data",
+        }
+
+    # Build train series
+    train_series = []
+    current = train_start
+    while current <= train_end:
+        train_series.append(float(train_data.get(current, 0)))
+        current += timedelta(days=1)
+
+    series = np.array(train_series, dtype=float)
+
+    # Apply the same WMA logic as _forecast_single
+    bucket_size = max(1, len(series) // len(WMA_WEIGHTS))
+    buckets = []
+    for i in range(len(WMA_WEIGHTS)):
+        start = i * bucket_size
+        end = start + bucket_size if i < len(WMA_WEIGHTS) - 1 else len(series)
+        bucket_data = series[start:end]
+        buckets.append(np.mean(bucket_data) if len(bucket_data) > 0 else 0)
+
+    wma = sum(w * b for w, b in zip(WMA_WEIGHTS, buckets))
+
+    # Trend
+    half = len(series) // 2
+    first_half = np.mean(series[:half]) if half > 0 else 0
+    second_half = np.mean(series[half:]) if half > 0 else 0
+    trend_per_day = (second_half - first_half) / max(1, half)
+    trend_adj = trend_per_day * FORECAST_HORIZON_DAYS * 0.5
+
+    daily_forecast = max(0, wma + (trend_adj / FORECAST_HORIZON_DAYS))
+    forecast_30d = int(round(daily_forecast * FORECAST_HORIZON_DAYS))
+
+    # Actual demand in test window (sum of daily quantities)
+    actual_30d = sum(test_data.values())
+
+    if actual_30d > 0:
+        mape = abs((actual_30d - forecast_30d) / actual_30d) * 100
+    else:
+        # If actuals are 0, can't compute percentage error
+        mape = 0 if forecast_30d == 0 else 100
+
+    return {
+        "sku_id": sku_id,
+        "warehouse_id": warehouse_id,
+        "mape": round(mape, 1),
+        "accuracy": round(100 - mape, 1),
+        "actual_30d": actual_30d,
+        "forecast_30d": forecast_30d,
+        "note": "ok",
+    }

@@ -5,7 +5,7 @@ Recommendations routes — AI-generated transfer proposals + impact assessment.
 from fastapi import APIRouter
 
 from app.ai.recommender import generate_recommendations
-from app.ai.forecaster import forecast_all
+from app.ai.forecaster import forecast_all, backtest_all
 from app.ai.imbalance_detector import detect_imbalances
 
 recommendations_router = APIRouter()
@@ -49,3 +49,14 @@ async def get_full_analysis():
         "impact_assessment": recommendations["impact_assessment"],
         "summary": recommendations["summary"],
     }
+
+
+@recommendations_router.get("/backtest")
+async def get_backtest():
+    """
+    Backtest forecast accuracy (MAPE) — uses the first 60 days of history
+    to forecast days 61-90, then compares to actuals.
+
+    Returns per-SKU/warehouse MAPE + aggregate accuracy score.
+    """
+    return await backtest_all()

@@ -266,6 +266,28 @@ async def generate_recommendations():
             total_transfer_cost = sum(r["transfer_cost"] for r in feasible_recs)
             total_benefit = sum(r["net_benefit"] for r in feasible_recs)
 
+            # --- Holding cost calculation ---
+            # Baseline: total daily holding cost across ALL stock (excess sits idle)
+            holding_cost_baseline_daily = sum(
+                float(r["available_qty"]) * float(holding_map.get((r["sku_id"], r["warehouse_id"]), Decimal("0.05")))
+                for r in stock_rows
+            )
+            # 30-day holding cost at baseline
+            holding_cost_baseline = holding_cost_baseline_daily * 30
+
+            # AI solution: transfers move stock from excess (high holding) to shortage (sells fast)
+            # Holding saved = stock removed from source * holding rate * 30 days
+            # Holding increase = stock added to destination * holding rate * ~15 days avg (sells through)
+            holding_saved_total = sum(
+                float(r["quantity"]) * float(holding_map.get((r["sku_id"], r["from_warehouse"]), Decimal("0.05"))) * 30
+                for r in feasible_recs
+            )
+            holding_increase_total = sum(
+                float(r["quantity"]) * float(holding_map.get((r["sku_id"], r["to_warehouse"]), Decimal("0.05"))) * 15
+                for r in feasible_recs
+            )
+            holding_cost_ai = holding_cost_baseline - holding_saved_total + holding_increase_total
+
             impact_metrics = [
                 {
                     "metric": "Expected shortage exposure (AED)",
@@ -282,6 +304,14 @@ async def generate_recommendations():
                     "unit": "units",
                     "delta": -shortage_reduced,
                     "is_improvement": shortage_reduced > 0,
+                },
+                {
+                    "metric": "Holding cost (30-day, AED)",
+                    "before": round(holding_cost_baseline, 2),
+                    "after": round(holding_cost_ai, 2),
+                    "unit": "AED",
+                    "delta": round(holding_cost_ai - holding_cost_baseline, 2),
+                    "is_improvement": holding_cost_ai < holding_cost_baseline,
                 },
                 {
                     "metric": "Net economic benefit (AED)",
@@ -319,6 +349,7 @@ async def generate_recommendations():
                 "shortage_exposure_aed": round(baseline_shortage_aed, 2),
                 "transfer_cost_aed": round(baseline_transfer_cost, 2),
                 "net_position_aed": round(baseline_net, 2),
+                "holding_cost_aed": round(holding_cost_baseline, 2),
                 "units_at_risk": sum(s["shortfall"] for s in shortages),
                 "service_level_pct": round(
                     100 * (1 - sum(s["shortfall"] for s in shortages) /
@@ -332,6 +363,7 @@ async def generate_recommendations():
                 "shortage_exposure_aed": round(ai_shortage_aed, 2),
                 "transfer_cost_aed": round(ai_transfer_cost, 2),
                 "net_position_aed": round(ai_net, 2),
+                "holding_cost_aed": round(holding_cost_ai, 2),
                 "units_at_risk": max(0, sum(s["shortfall"] for s in shortages) - shortage_reduced),
                 "service_level_pct": round(
                     100 * (1 - max(0, sum(s["shortfall"] for s in shortages) - shortage_reduced) /
@@ -345,6 +377,7 @@ async def generate_recommendations():
                     100 * (baseline_shortage_aed - ai_shortage_aed) / max(1, baseline_shortage_aed), 1
                 ) if baseline_shortage_aed > 0 else 0,
                 "net_benefit_aed": round(ai_net - baseline_net, 2),
+                "holding_cost_savings_aed": round(holding_cost_baseline - holding_cost_ai, 2),
                 "service_level_delta_pct": round(
                     (100 * (1 - max(0, sum(s["shortfall"] for s in shortages) - shortage_reduced) /
                             max(1, sum(s["shortfall"] for s in shortages) + sum(s["available"] for s in shortages))))

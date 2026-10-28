@@ -96,6 +96,7 @@ class InventoryAgent:
             "transfer_completed",
             "simulator_started",
             "simulator_resumed",
+            "inventory_corrected",
         }
 
         if event_type not in reactive_events:
@@ -433,6 +434,7 @@ class InventoryAgent:
             "react:transfer_completed": "A transfer completed — I'm verifying the inventory impact.",
             "react:simulator_started": "The simulation just started — I'm running my first full analysis.",
             "react:simulator_resumed": "Simulation resumed — picking up where I left off.",
+            "react:inventory_corrected": "Sara corrected a stock record — I'm re-running the full analysis with the updated inventory.",
         }
         lines.append(trigger_map.get(trigger, f"Triggered by: {trigger}"))
         lines.append("")

@@ -161,6 +161,17 @@ export const api = {
       method: "POST",
     }),
 
+  correctInventory: (data: {
+    sku_id: string;
+    warehouse_id: string;
+    new_available_qty: number;
+    reason: string;
+  }) =>
+    fetchAPI(`/api/orders/inventory/correct`, {
+      method: "POST",
+      body: JSON.stringify({ ...data, corrected_by: "Sara" }),
+    }),
+
   // --- Disruptions ---
   getDisruptions: (activeOnly?: boolean) =>
     fetchAPI<Disruption[]>(`/api/disruptions${activeOnly ? "?active_only=true" : ""}`),
@@ -172,6 +183,8 @@ export const api = {
     ),
 
   getForecasts: () => fetchAPI<ForecastResult[]>("/api/recommendations/forecasts"),
+
+  getBacktest: () => fetchAPI<any>("/api/recommendations/backtest"),
 
   getImbalances: () => fetchAPI<ImbalanceFlag[]>("/api/recommendations/imbalances"),
 
