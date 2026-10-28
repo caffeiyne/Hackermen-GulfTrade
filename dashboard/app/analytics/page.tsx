@@ -584,19 +584,19 @@ export default function AnalyticsPage() {
               <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
                 {/* Bar chart of top SKUs by available stock */}
                 <div className="lg:col-span-2">
-                  <h4 className="text-sm font-medium text-buddy-text mb-3">Top SKUs by Available Stock</h4>
-                  <ResponsiveContainer width="100%" height={220}>
+                  <h4 className="text-sm font-medium text-buddy-text mb-4">Top SKUs by Available Stock</h4>
+                  <ResponsiveContainer width="100%" height={300}>
                     <BarChart
                       data={warehouseStockDetail.rows.slice(0, 8)}
                       layout="vertical"
-                      margin={{ left: 10, right: 10, top: 5, bottom: 5 }}
+                      margin={{ left: 20, right: 20, top: 15, bottom: 15 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#1e242d" horizontal={false} />
                       <XAxis type="number" stroke="#6b7280" fontSize={10} />
                       <YAxis type="category" dataKey="name" stroke="#6b7280" fontSize={9} width={100} />
                       <Tooltip content={<DarkTooltip />} cursor={{ fill: "#1e242d40" }} />
-                      <Bar dataKey="available" name="Available" fill={WAREHOUSE_COLORS[selectedWarehouse!] || COLORS.tradeling} radius={[0, 4, 4, 0]} barSize={14} />
-                      <Bar dataKey="inbound" name="Inbound" fill={COLORS.blue} radius={[0, 4, 4, 0]} barSize={14} />
+                      <Bar dataKey="available" name="Available" fill={WAREHOUSE_COLORS[selectedWarehouse!] || COLORS.tradeling} radius={[0, 4, 4, 0]} barSize={18} />
+                      <Bar dataKey="inbound" name="Inbound" fill={COLORS.blue} radius={[0, 4, 4, 0]} barSize={18} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>

@@ -92,9 +92,8 @@ export default function ActionsPage() {
     return () => clearInterval(interval);
   }, [load]);
 
-  // Load SKUs and warehouses for manual transfer panel
+  // Load SKUs and warehouses (for manual transfer panel + SKU name labels)
   useEffect(() => {
-    if (!showManualPanel) return;
     const loadData = async () => {
       try {
         const [skuData, whData] = await Promise.all([
@@ -108,7 +107,18 @@ export default function ActionsPage() {
       }
     };
     loadData();
-  }, [showManualPanel]);
+  }, []);
+
+  const skuNameMap = useMemo(() => new Map(skus.map((s) => [s.sku_id, s.name])), [skus]);
+  const skuLabel = (id: string) => {
+    const name = skuNameMap.get(id);
+    return name ? `${name} (${id})` : id;
+  };
+  const warehouseNameMap = useMemo(() => new Map(warehouses.map((w) => [w.warehouse_id, w.name])), [warehouses]);
+  const warehouseLabel = (id: string) => {
+    const name = warehouseNameMap.get(id);
+    return name ? `${name} (${id})` : id;
+  };
 
   // Fetch stock levels for the selected SKU across all warehouses
   useEffect(() => {
@@ -238,7 +248,7 @@ export default function ActionsPage() {
       setError("Cannot cancel — no transfer ID found for this action");
       return;
     }
-    if (!confirm(`Cancel this transfer?\n\n${executedResults[recId].quantityMoved} units of ${rec.sku_id} will be moved back from ${rec.to_warehouse} to ${rec.from_warehouse}.`)) return;
+    if (!confirm(`Cancel this transfer?\n\n${executedResults[recId].quantityMoved} units of ${skuLabel(rec.sku_id)} will be moved back from ${warehouseLabel(rec.to_warehouse)} to ${warehouseLabel(rec.from_warehouse)}.`)) return;
     setProcessingId(recId);
     setError(null);
     try {
@@ -290,7 +300,7 @@ export default function ActionsPage() {
             <h1 className="text-2xl font-bold text-buddy-text">Recommended Actions</h1>
             <p className="text-sm text-buddy-muted mt-1">
               Ranked transfer proposals with cost/benefit analysis — requires planner approval.
-              {skuFilter && ` Filtered by SKU: ${skuFilter}`}
+              {skuFilter && ` Filtered by SKU: ${skuLabel(skuFilter)}`}
             </p>
           </div>
           <Button
@@ -745,18 +755,18 @@ export default function ActionsPage() {
                       {/* Transfer route */}
                       <div className="flex items-center gap-3">
                         <div className="text-center">
-                          <p className="font-mono text-sm font-medium text-buddy-text">{rec.from_warehouse}</p>
+                          <p className="font-mono text-sm font-medium text-buddy-text">{warehouseLabel(rec.from_warehouse)}</p>
                           <p className="text-xs text-buddy-muted">From</p>
                         </div>
                         <ArrowRight className={`w-5 h-5 ${rec.is_feasible ? "text-tradeling-400" : "text-red-400"}`} />
                         <div className="text-center">
-                          <p className="font-mono text-sm font-medium text-buddy-text">{rec.to_warehouse}</p>
+                          <p className="font-mono text-sm font-medium text-buddy-text">{warehouseLabel(rec.to_warehouse)}</p>
                           <p className="text-xs text-buddy-muted">To</p>
                         </div>
                       </div>
 
                       <div>
-                        <p className="font-mono text-sm text-buddy-text">{rec.sku_id}</p>
+                        <p className="font-mono text-sm text-buddy-text">{skuLabel(rec.sku_id)}</p>
                         <p className="text-xs text-buddy-muted">{formatNumber(rec.quantity)} units</p>
                       </div>
                     </div>
@@ -870,16 +880,16 @@ export default function ActionsPage() {
                                 {isCancelled ? (
                                   <>
                                     {formatNumber(executedResults[rec.recommendation_id].quantityMoved)} units of{" "}
-                                    <span className="font-mono text-buddy-text">{rec.sku_id}</span> returned from{" "}
-                                    <span className="font-mono text-buddy-text">{rec.to_warehouse}</span> to{" "}
-                                    <span className="font-mono text-buddy-text">{rec.from_warehouse}</span>
+                                    <span className="font-mono text-buddy-text">{skuLabel(rec.sku_id)}</span> returned from{" "}
+                                    <span className="font-mono text-buddy-text">{warehouseLabel(rec.to_warehouse)}</span> to{" "}
+                                    <span className="font-mono text-buddy-text">{warehouseLabel(rec.from_warehouse)}</span>
                                   </>
                                 ) : (
                                   <>
                                     {formatNumber(executedResults[rec.recommendation_id].quantityMoved)} units of{" "}
-                                    <span className="font-mono text-buddy-text">{rec.sku_id}</span> moved from{" "}
-                                    <span className="font-mono text-buddy-text">{rec.from_warehouse}</span> to{" "}
-                                    <span className="font-mono text-buddy-text">{rec.to_warehouse}</span>
+                                    <span className="font-mono text-buddy-text">{skuLabel(rec.sku_id)}</span> moved from{" "}
+                                    <span className="font-mono text-buddy-text">{warehouseLabel(rec.from_warehouse)}</span> to{" "}
+                                    <span className="font-mono text-buddy-text">{warehouseLabel(rec.to_warehouse)}</span>
                                   </>
                                 )}
                               </p>

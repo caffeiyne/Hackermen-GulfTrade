@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { motion } from "framer-motion";
 import { TrendingUp, Activity } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { api } from "@/lib/api";
 import { formatNumber } from "@/lib/utils";
-import type { ForecastResult } from "@/lib/types";
+import type { ForecastResult, SKU } from "@/lib/types";
 
 const confidenceColors: Record<string, "success" | "warning" | "danger"> = {
   high: "success",
@@ -17,13 +17,18 @@ const confidenceColors: Record<string, "success" | "warning" | "danger"> = {
 
 export default function ForecastPage() {
   const [forecasts, setForecasts] = useState<ForecastResult[]>([]);
+  const [skus, setSkus] = useState<SKU[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
       try {
-        const f = await api.getForecasts();
+        const [f, skuData] = await Promise.all([
+          api.getForecasts(),
+          api.getSkus(),
+        ]);
         setForecasts(f);
+        setSkus(skuData);
       } catch (err) {
         console.error(err);
       } finally {
@@ -34,6 +39,12 @@ export default function ForecastPage() {
     const interval = setInterval(load, 15000);
     return () => clearInterval(interval);
   }, []);
+
+  const skuNameMap = useMemo(() => new Map(skus.map((s) => [s.sku_id, s.name])), [skus]);
+  const skuLabel = (id: string) => {
+    const name = skuNameMap.get(id);
+    return name ? `${name} (${id})` : id;
+  };
 
   return (
     <div className="space-y-6">
@@ -63,7 +74,7 @@ export default function ForecastPage() {
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-mono text-sm font-medium text-buddy-text">{f.sku_id}</span>
+                      <span className="font-mono text-sm font-medium text-buddy-text">{skuLabel(f.sku_id)}</span>
                       <Badge variant="neutral">{f.warehouse_id}</Badge>
                     </div>
                     <p className="text-xs text-buddy-muted mt-1">{f.method}</p>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { AlertTriangle, AlertCircle, Info, Clock, ArrowRight } from "lucide-react";
@@ -9,7 +9,7 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { api } from "@/lib/api";
 import { formatNumber } from "@/lib/utils";
-import type { ImbalanceFlag, Recommendation } from "@/lib/types";
+import type { ImbalanceFlag, Recommendation, SKU } from "@/lib/types";
 
 const flagIcons: Record<string, typeof AlertTriangle> = {
   shortage: AlertCircle,
@@ -30,18 +30,21 @@ export default function ImbalancesPage() {
 
   const [flags, setFlags] = useState<ImbalanceFlag[]>([]);
   const [recs, setRecs] = useState<Recommendation[]>([]);
+  const [skus, setSkus] = useState<SKU[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>("all");
 
   useEffect(() => {
     async function load() {
       try {
-        const [f, recData] = await Promise.all([
+        const [f, recData, skuData] = await Promise.all([
           api.getImbalances(),
           api.getRecommendations(),
+          api.getSkus(),
         ]);
         setFlags(f);
         setRecs(recData.recommendations || []);
+        setSkus(skuData);
       } catch (err) {
         console.error(err);
       } finally {
@@ -52,6 +55,12 @@ export default function ImbalancesPage() {
     const interval = setInterval(load, 10000);
     return () => clearInterval(interval);
   }, []);
+
+  const skuNameMap = useMemo(() => new Map(skus.map((s) => [s.sku_id, s.name])), [skus]);
+  const skuLabel = (id: string) => {
+    const name = skuNameMap.get(id);
+    return name ? `${name} (${id})` : id;
+  };
 
   // Build a set of SKU IDs that have at least one recommendation
   const recSkuIds = new Set(recs.map((r) => r.sku_id));
@@ -72,7 +81,7 @@ export default function ImbalancesPage() {
         <h1 className="text-2xl font-bold text-buddy-text">Inventory Imbalances</h1>
         <p className="text-sm text-buddy-muted mt-1">
           Flagged shortages, excess stock, ageing inventory, and misleading sales patterns
-          {skuFilter && ` · Filtered by SKU: ${skuFilter}`}
+          {skuFilter && ` · Filtered by SKU: ${skuLabel(skuFilter)}`}
         </p>
       </div>
 
@@ -125,7 +134,7 @@ export default function ImbalancesPage() {
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="font-mono text-sm font-medium text-buddy-text">{flag.sku_id}</span>
+                      <span className="font-mono text-sm font-medium text-buddy-text">{skuLabel(flag.sku_id)}</span>
                       <Badge variant="neutral">{flag.warehouse_id}</Badge>
                       <Badge variant={severityColors[flag.severity]}>{flag.flag_type.replace("_", " ")}</Badge>
                     </div>

@@ -21,7 +21,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/lib/api";
 import { formatCurrency, formatNumber } from "@/lib/utils";
-import type { TransferProposal, StockLevel, Warehouse } from "@/lib/types";
+import type { TransferProposal, StockLevel, Warehouse, SKU } from "@/lib/types";
 
 // ---- Mini UAE map coordinates (mirrors UAEMap.tsx) ----
 const WH_COORDS: Record<string, { x: number; y: number; city: string }> = {
@@ -46,6 +46,7 @@ export default function ActionLogPage() {
   const [transfers, setTransfers] = useState<TransferProposal[]>([]);
   const [stockLevels, setStockLevels] = useState<StockLevel[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [skus, setSkus] = useState<SKU[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -53,20 +54,33 @@ export default function ActionLogPage() {
 
   const loadData = useCallback(async () => {
     try {
-      const [tr, stk, whs] = await Promise.all([
+      const [tr, stk, whs, skuData] = await Promise.all([
         api.getTransfers(),
         api.getStockLevels(),
         api.getWarehouses(),
+        api.getSkus(),
       ]);
       setTransfers(tr);
       setStockLevels(stk);
       setWarehouses(whs);
+      setSkus(skuData);
     } catch (err) {
       console.error("Failed to load action log:", err);
     } finally {
       setLoading(false);
     }
   }, []);
+
+  const skuNameMap = useMemo(() => new Map(skus.map((s) => [s.sku_id, s.name])), [skus]);
+  const skuLabel = (id: string) => {
+    const name = skuNameMap.get(id);
+    return name ? `${name} (${id})` : id;
+  };
+  const warehouseNameMap = useMemo(() => new Map(warehouses.map((w) => [w.warehouse_id, w.name])), [warehouses]);
+  const warehouseLabel = (id: string) => {
+    const name = warehouseNameMap.get(id);
+    return name ? `${name} (${id})` : id;
+  };
 
   useEffect(() => {
     loadData();
@@ -271,19 +285,19 @@ export default function ActionLogPage() {
                         {/* Route */}
                         <div className="flex items-center gap-3">
                           <div className="text-center">
-                            <p className="font-mono text-sm font-medium text-buddy-text">{transfer.from_warehouse}</p>
+                            <p className="font-mono text-sm font-medium text-buddy-text">{warehouseLabel(transfer.from_warehouse)}</p>
                             <p className="text-xs text-buddy-muted">From</p>
                           </div>
                           <ArrowRight className={`w-5 h-5 ${isCancelled ? "text-yellow-400" : isApproved ? "text-tradeling-400" : "text-red-400"}`} />
                           <div className="text-center">
-                            <p className="font-mono text-sm font-medium text-buddy-text">{transfer.to_warehouse}</p>
+                            <p className="font-mono text-sm font-medium text-buddy-text">{warehouseLabel(transfer.to_warehouse)}</p>
                             <p className="text-xs text-buddy-muted">To</p>
                           </div>
                         </div>
 
                         {/* SKU + qty */}
                         <div>
-                          <p className="font-mono text-sm text-buddy-text">{transfer.sku_id}</p>
+                          <p className="font-mono text-sm text-buddy-text">{skuLabel(transfer.sku_id)}</p>
                           <p className="text-xs text-buddy-muted">{formatNumber(transfer.quantity)} units</p>
                         </div>
                       </div>
@@ -478,11 +492,11 @@ export default function ActionLogPage() {
                             <div className="flex items-center gap-4 mt-2 text-xs text-buddy-muted">
                               <span className="flex items-center gap-1">
                                 <span className="w-2.5 h-2.5 rounded-full" style={{ background: fromColor }} />
-                                Source: {transfer.from_warehouse}
+                                Source: {warehouseLabel(transfer.from_warehouse)}
                               </span>
                               <span className="flex items-center gap-1">
                                 <span className="w-2.5 h-2.5 rounded-full" style={{ background: toColor }} />
-                                Destination: {transfer.to_warehouse}
+                                Destination: {warehouseLabel(transfer.to_warehouse)}
                               </span>
                             </div>
                           </div>
@@ -491,7 +505,7 @@ export default function ActionLogPage() {
                           <div>
                             <h4 className="text-sm font-medium text-buddy-text mb-3 flex items-center gap-2">
                               <Package className="w-4 h-4 text-tradeling-400" />
-                              Stock Impact — {transfer.sku_id}
+                              Stock Impact — {skuLabel(transfer.sku_id)}
                             </h4>
 
                             {/* Source warehouse before/after */}
@@ -502,7 +516,7 @@ export default function ActionLogPage() {
                                   <div className="flex items-center gap-2">
                                     <span className="w-2.5 h-2.5 rounded-full" style={{ background: fromColor }} />
                                     <span className="font-mono text-sm font-medium text-buddy-text">
-                                      {transfer.from_warehouse}
+                                      {warehouseLabel(transfer.from_warehouse)}
                                     </span>
                                     <span className="text-xs text-buddy-muted">Source (stock out)</span>
                                   </div>
@@ -533,7 +547,7 @@ export default function ActionLogPage() {
                                   <div className="flex items-center gap-2">
                                     <span className="w-2.5 h-2.5 rounded-full" style={{ background: toColor }} />
                                     <span className="font-mono text-sm font-medium text-buddy-text">
-                                      {transfer.to_warehouse}
+                                      {warehouseLabel(transfer.to_warehouse)}
                                     </span>
                                     <span className="text-xs text-buddy-muted">Destination (stock in)</span>
                                   </div>
