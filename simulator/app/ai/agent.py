@@ -1,7 +1,7 @@
 """
 Inventory Intelligence Agent — agentic reasoning layer.
 
-This is NOT a pipeline. It's an autonomous agent that:
+An event-driven planning loop that:
 
   1. OBSERVES the simulation state (inventory, sales, disruptions)
   2. REASONS about what it sees (multi-step analysis using existing AI tools)
@@ -28,6 +28,7 @@ from app.db import get_conn, notify_event
 from app.ai.forecaster import forecast_all
 from app.ai.imbalance_detector import detect_imbalances
 from app.ai.recommender import generate_recommendations
+from app.ai.planning import load_context
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,8 @@ class InventoryAgent:
             "transfer_completed",
             "simulator_started",
             "simulator_resumed",
+            "record_corrected",
+            "assumption_changed",
         }
 
         if event_type not in reactive_events:
@@ -283,17 +286,25 @@ class InventoryAgent:
         steps = []
         critical_findings = []
 
+        # Shared planning context (stock, disruption-adjusted inbound, routes) — loaded once
+        async with get_conn() as conn:
+            ctx = await load_context(conn)
+
         # Tool 1: Forecast
-        steps.append({"step": "forecast", "description": "Generating 30-day demand forecasts for all SKU/warehouse combinations"})
-        forecasts = await forecast_all()
+        steps.append({"step": "forecast", "description": "Generating 30-day demand forecasts (P10/P50/P90) for all SKU/warehouse combinations"})
+        forecasts = await forecast_all(ctx=ctx)
+        corrected = sum(1 for f in forecasts if any("stockout" in n for n in f["data_quality_notes"]))
         steps.append({
             "step": "forecast_complete",
-            "description": f"Generated {len(forecasts)} forecasts. {sum(1 for f in forecasts if f['confidence_level'] == 'low')} low-confidence due to data quality issues.",
+            "description": (
+                f"Generated {len(forecasts)} forecasts. {sum(1 for f in forecasts if f['confidence_level'] == 'low')} low-confidence; "
+                f"{corrected} corrected for stockout-censored history."
+            ),
         })
 
         # Tool 2: Detect imbalances
         steps.append({"step": "imbalance_detection", "description": "Scanning for shortages, excess, ageing, and misleading sales patterns"})
-        imbalances = await detect_imbalances()
+        imbalances = await detect_imbalances(ctx=ctx, forecasts=forecasts)
         critical = [i for i in imbalances if i["severity"] == "critical"]
         warnings = [i for i in imbalances if i["severity"] == "warning"]
         steps.append({
@@ -313,15 +324,21 @@ class InventoryAgent:
 
         # Tool 3: Generate recommendations
         steps.append({"step": "recommendation", "description": "Evaluating transfer options — checking routes, costs, lead times, and disruptions"})
-        recs_result = await generate_recommendations()
+        recs_result = await generate_recommendations(ctx=ctx, forecasts=forecasts)
         recs = recs_result["recommendations"]
         feasible = [r for r in recs if r["is_feasible"]]
         rejected = [r for r in recs if not r["is_feasible"]]
 
         steps.append({
             "step": "recommendation_complete",
-            "description": f"Evaluated {len(recs)} options. {len(feasible)} feasible, {len(rejected)} rejected (net benefit negative or constraints violated).",
+            "description": f"Evaluated {len(recs)} options. {len(feasible)} recommended, {len(rejected)} not recommended (blocked route, source can't spare stock, or cost exceeds expected benefit).",
         })
+        replenishment = recs_result.get("replenishment_actions", [])
+        if replenishment:
+            steps.append({
+                "step": "replenishment",
+                "description": f"{len(replenishment)} location(s) still short after transfers — replenishment advised (planner action, not executed).",
+            })
 
         # Disruption awareness
         if observation["active_disruptions_count"] > 0:
@@ -342,9 +359,10 @@ class InventoryAgent:
                 })
 
         # Trust boundary verification
-        unaffected_skus = observation["total_skus"] - sum(
-            len(d.get("affected_skus", [])) for d in observation["active_disruptions"]
-        )
+        affected = set()
+        for d in observation["active_disruptions"]:
+            affected.update(d.get("affected_skus") or [])
+        unaffected_skus = observation["total_skus"] - len(affected)
         steps.append({
             "step": "trust_boundary",
             "description": f"Verified trust boundaries: {unaffected_skus} SKUs confirmed unaffected by disruptions. No assumptions made about un-affected products.",
@@ -359,6 +377,8 @@ class InventoryAgent:
             "feasible_count": len(feasible),
             "rejected_count": len(rejected),
             "summary": recs_result["summary"],
+            "replenishment": replenishment,
+            "baseline_comparison": recs_result.get("baseline_comparison"),
         }
 
     # ------------------------------------------------------------------
@@ -381,6 +401,9 @@ class InventoryAgent:
                 "to": rec["to_warehouse"],
                 "quantity": rec["quantity"],
                 "net_benefit": rec["net_benefit"],
+                "transfer_cost": rec["transfer_cost"],
+                "expected_benefit": rec["expected_benefit"],
+                "downside_net_benefit": rec.get("downside_net_benefit"),
                 "lead_time": rec["lead_time_days"],
                 "confidence": rec["confidence_level"],
                 "rank": rec["rank"],
@@ -397,12 +420,14 @@ class InventoryAgent:
                 "sku_id": rec["sku_id"],
                 "from": rec["from_warehouse"],
                 "to": rec["to_warehouse"],
-                "reason": f"Net benefit negative ({rec['net_benefit']:.0f} AED) or constraints not met",
+                "reason": rec.get("rejection_reason") or "Constraints not met",
             })
 
         return {
             "recommendations": priority_actions,
             "rejected": rejected_actions,
+            "replenishment": reasoning.get("replenishment", [])[:3],
+            "baseline_comparison": reasoning.get("baseline_comparison"),
             "total_feasible": len(feasible),
             "total_rejected": len(rejected),
         }
@@ -433,6 +458,8 @@ class InventoryAgent:
             "react:transfer_completed": "A transfer completed — I'm verifying the inventory impact.",
             "react:simulator_started": "The simulation just started — I'm running my first full analysis.",
             "react:simulator_resumed": "Simulation resumed — picking up where I left off.",
+            "react:record_corrected": "Sara corrected a stock record — I've recomputed the forecast position, imbalances, recommendations and impact.",
+            "react:assumption_changed": "Sara changed a disruption assumption — everything downstream has been recomputed.",
         }
         lines.append(trigger_map.get(trigger, f"Triggered by: {trigger}"))
         lines.append("")
@@ -479,11 +506,21 @@ class InventoryAgent:
                 lines.append(
                     f"My top recommendation: Transfer {top['quantity']} units of "
                     f"{top.get('sku_name', top['sku_id'])} from {top['from']} to {top['to']} "
-                    f"(net benefit: {top['net_benefit']:.0f} AED, arrives in {top['lead_time']} days)."
+                    f"(expected net benefit {top['net_benefit']:.0f} AED"
+                    + (f", {top['downside_net_benefit']:.0f} AED if demand lands at P10"
+                       if top.get("downside_net_benefit") is not None else "")
+                    + f"; arrives in {top['lead_time']} days)."
                 )
                 if top.get("route_disrupted"):
                     lines.append("Note: This route is currently disrupted — I've added buffer time to the lead time estimate.")
-            lines.append(f"I evaluated {feasible + rejected} options total. {feasible} are feasible, {rejected} were rejected.")
+            lines.append(f"I evaluated {feasible + rejected} options total. {feasible} recommended, {rejected} not recommended.")
+            bc = plan.get("baseline_comparison")
+            if bc:
+                lines.append(
+                    f"If Sara approves all of them: expected lost sales {bc['baseline']['shortage_exposure_aed']:.0f} → "
+                    f"{bc['ai_solution']['shortage_exposure_aed']:.0f} AED, fill rate {bc['baseline']['service_level_pct']}% → "
+                    f"{bc['ai_solution']['service_level_pct']}%, net {bc['improvement']['net_benefit_aed']:.0f} AED better than doing nothing."
+                )
         else:
             lines.append("No feasible transfer actions at this time. All inventory is balanced or no economical transfers exist.")
 
@@ -493,8 +530,14 @@ class InventoryAgent:
             for r in plan["rejected"][:2]:
                 lines.append(f"   • {r['sku_id']} {r['from']}→{r['to']}: {r['reason']}")
 
+        if plan.get("replenishment"):
+            lines.append("")
+            lines.append("Transfers alone won't close these gaps — replenishment advised:")
+            for r in plan["replenishment"][:2]:
+                lines.append(f"   • {r['sku_id']} at {r['warehouse_id']}: ~{r['expected_units_short_after_transfers']:.0f} units still expected short")
+
         lines.append("")
-        lines.append("All recommendations require Sara's approval before execution.")
+        lines.append("Forecasts are estimates with P10–P90 ranges, not certainties. All recommendations require Sara's approval before execution.")
 
         return "\n".join(lines)
 
@@ -538,12 +581,13 @@ class InventoryAgent:
                         """
                         INSERT INTO orders.transfers
                             (sku_id, from_warehouse, to_warehouse, quantity,
-                             transfer_cost, lead_time_days, reason, status)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, 'proposed')
+                             transfer_cost, lead_time_days, reason, expected_benefit, net_benefit, status)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'proposed')
                         RETURNING transfer_id
                         """,
                         rec["sku_id"], rec["from"], rec["to"], rec["quantity"],
-                        rec["net_benefit"], rec["lead_time"], rec["reason"],
+                        rec["transfer_cost"], rec["lead_time"], rec["reason"],
+                        rec["expected_benefit"], rec["net_benefit"],
                     )
 
                     actions.append({
