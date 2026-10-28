@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, Check, X, DollarSign, TrendingUp, Loader2, AlertCircle, Truck, ExternalLink, Clock, Plus, Hand, RotateCcw, BarChart3 } from "lucide-react";
+import { ArrowRight, Check, X, DollarSign, TrendingUp, Loader2, AlertCircle, Truck, ExternalLink, Clock, Plus, Hand, RotateCcw, BarChart3, Package } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -18,6 +18,7 @@ export default function ActionsPage() {
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [impact, setImpact] = useState<ImpactAssessment[]>([]);
   const [baselineComparison, setBaselineComparison] = useState<any>(null);
+  const [replenishment, setReplenishment] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionedIds, setActionedIds] = useState<Set<string>>(new Set());
   const [processingId, setProcessingId] = useState<string | null>(null);
@@ -79,6 +80,7 @@ export default function ActionsPage() {
       setRecommendations(data.recommendations || []);
       setImpact(data.impact_assessment || []);
       setBaselineComparison(data.baseline_comparison || null);
+      setReplenishment(data.replenishment_actions || []);
     } catch (err) {
       console.error(err);
     } finally {
@@ -600,23 +602,29 @@ export default function ActionsPage() {
               <p className="text-xs text-buddy-muted mb-3">{baselineComparison.baseline.description}</p>
               <div className="space-y-2">
                 <div className="flex justify-between text-xs">
-                  <span className="text-buddy-muted">Shortage Exposure</span>
+                  <span className="text-buddy-muted">Expected lost sales (margin)</span>
                   <span className="font-medium text-red-400">{formatCurrency(baselineComparison.baseline.shortage_exposure_aed)}</span>
                 </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-buddy-muted">Transfer Cost</span>
                   <span className="font-medium text-buddy-text">{formatCurrency(baselineComparison.baseline.transfer_cost_aed)}</span>
                 </div>
+                {baselineComparison.baseline.excess_holding_aed !== undefined && (
+                  <div className="flex justify-between text-xs">
+                    <span className="text-buddy-muted">Holding on surplus (30d)</span>
+                    <span className="font-medium text-buddy-text">{formatCurrency(baselineComparison.baseline.excess_holding_aed)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-xs pt-2 border-t border-buddy-border">
-                  <span className="text-buddy-muted font-medium">Net Position</span>
+                  <span className="text-buddy-muted font-medium">Total expected cost</span>
                   <span className="font-bold text-red-400">{formatCurrency(baselineComparison.baseline.net_position_aed)}</span>
                 </div>
                 <div className="flex justify-between text-xs">
-                  <span className="text-buddy-muted">Units at Risk</span>
+                  <span className="text-buddy-muted">Expected units short</span>
                   <span className="font-medium text-buddy-text">{formatNumber(baselineComparison.baseline.units_at_risk)}</span>
                 </div>
                 <div className="flex justify-between text-xs">
-                  <span className="text-buddy-muted">Service Level</span>
+                  <span className="text-buddy-muted">Expected fill rate</span>
                   <span className="font-medium text-red-400">{baselineComparison.baseline.service_level_pct}%</span>
                 </div>
               </div>
@@ -631,23 +639,29 @@ export default function ActionsPage() {
               <p className="text-xs text-buddy-muted mb-3">{baselineComparison.ai_solution.description}</p>
               <div className="space-y-2">
                 <div className="flex justify-between text-xs">
-                  <span className="text-buddy-muted">Shortage Exposure</span>
+                  <span className="text-buddy-muted">Expected lost sales (margin)</span>
                   <span className="font-medium text-tradeling-400">{formatCurrency(baselineComparison.ai_solution.shortage_exposure_aed)}</span>
                 </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-buddy-muted">Transfer Cost</span>
                   <span className="font-medium text-buddy-text">{formatCurrency(baselineComparison.ai_solution.transfer_cost_aed)}</span>
                 </div>
+                {baselineComparison.ai_solution.excess_holding_aed !== undefined && (
+                  <div className="flex justify-between text-xs">
+                    <span className="text-buddy-muted">Holding on surplus (30d)</span>
+                    <span className="font-medium text-buddy-text">{formatCurrency(baselineComparison.ai_solution.excess_holding_aed)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-xs pt-2 border-t border-tradeling-800/30">
-                  <span className="text-buddy-muted font-medium">Net Position</span>
+                  <span className="text-buddy-muted font-medium">Total expected cost</span>
                   <span className="font-bold text-tradeling-400">{formatCurrency(baselineComparison.ai_solution.net_position_aed)}</span>
                 </div>
                 <div className="flex justify-between text-xs">
-                  <span className="text-buddy-muted">Units at Risk</span>
+                  <span className="text-buddy-muted">Expected units short</span>
                   <span className="font-medium text-buddy-text">{formatNumber(baselineComparison.ai_solution.units_at_risk)}</span>
                 </div>
                 <div className="flex justify-between text-xs">
-                  <span className="text-buddy-muted">Service Level</span>
+                  <span className="text-buddy-muted">Expected fill rate</span>
                   <span className="font-medium text-tradeling-400">{baselineComparison.ai_solution.service_level_pct}%</span>
                 </div>
               </div>
@@ -676,14 +690,45 @@ export default function ActionsPage() {
               </div>
               {baselineComparison.improvement.service_level_delta_pct > 0 && (
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-buddy-muted">Service level +</span>
+                  <span className="text-xs text-buddy-muted">Fill rate +</span>
                   <span className="text-sm font-bold text-tradeling-400">
-                    {baselineComparison.improvement.service_level_delta_pct}%
+                    {baselineComparison.improvement.service_level_delta_pct} pts
                   </span>
                 </div>
               )}
             </div>
           )}
+          {baselineComparison.method && (
+            <p className="mt-3 text-xs text-buddy-muted">
+              How this is calculated: {baselineComparison.method} Demand is a forecast range, not a certainty, so these
+              are expected values.
+            </p>
+          )}
+        </Card>
+      )}
+
+      {/* Replenishment advice — where transfers can't close the gap */}
+      {replenishment.length > 0 && (
+        <Card delay={0.05}>
+          <div className="flex items-center gap-2 mb-2">
+            <Package className="w-4 h-4 text-amber-400" />
+            <h3 className="font-medium text-buddy-text">Replenishment advice</h3>
+            <span className="text-xs text-buddy-muted">— transfers alone won&apos;t close these gaps (purchasing stays with Sara)</span>
+          </div>
+          <div className="space-y-2">
+            {replenishment.slice(0, 6).map((r: any) => (
+              <div key={`${r.sku_id}-${r.warehouse_id}`} className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-lg bg-buddy-bg border border-buddy-border">
+                <div>
+                  <p className="text-sm text-buddy-text font-mono">{skuLabel(r.sku_id)} @ {warehouseLabel(r.warehouse_id)}</p>
+                  <p className="text-xs text-buddy-muted">{r.reason}</p>
+                  {r.notes && r.notes.length > 0 && <p className="text-xs text-amber-400 mt-1">{r.notes.join(" · ")}</p>}
+                </div>
+                <Badge variant={r.arrives_within_horizon ? "warning" : "danger"}>
+                  ~{formatNumber(r.suggested_qty)} units · {r.supplier_lead_days}d lead
+                </Badge>
+              </div>
+            ))}
+          </div>
         </Card>
       )}
 
@@ -776,7 +821,7 @@ export default function ActionsPage() {
                         <Badge variant="danger">Route Disrupted</Badge>
                       )}
                       <Badge variant={rec.is_feasible ? "success" : "danger"}>
-                        {rec.is_feasible ? "Feasible" : "Not Recommended"}
+                        {rec.is_feasible ? "Recommended" : "Not Recommended"}
                       </Badge>
                     </div>
                   </div>
@@ -804,6 +849,21 @@ export default function ActionsPage() {
                       <p className="text-sm font-medium text-buddy-text">{rec.lead_time_days} days</p>
                     </div>
                   </div>
+                  {rec.is_feasible && rec.downside_net_benefit !== undefined && rec.downside_net_benefit !== null && (
+                    <p className="text-xs text-buddy-muted -mt-2 mb-4">
+                      If demand comes in low (P10), net benefit would be{" "}
+                      <span className={rec.downside_net_benefit >= 0 ? "text-tradeling-400" : "text-red-400"}>
+                        {formatCurrency(rec.downside_net_benefit)}
+                      </span>
+                      {rec.downside_net_benefit >= 0 ? " — still worth doing." : " — the move only pays off if demand is at least average."}
+                    </p>
+                  )}
+                  {!rec.is_feasible && rec.rejection_reason && (
+                    <div className="p-3 rounded-lg bg-red-950/20 border border-red-900/40 mb-4">
+                      <p className="text-xs text-red-400 font-medium mb-1">Why not</p>
+                      <p className="text-xs text-buddy-text">{rec.rejection_reason}</p>
+                    </div>
+                  )}
 
                   {/* Reason */}
                   <div className="p-3 rounded-lg bg-buddy-bg mb-4">

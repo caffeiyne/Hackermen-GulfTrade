@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { api } from "@/lib/api";
 import { formatNumber } from "@/lib/utils";
+import { BacktestCard } from "@/components/BacktestCard";
 import type { ForecastResult, SKU } from "@/lib/types";
 
 const confidenceColors: Record<string, "success" | "warning" | "danger"> = {
@@ -51,9 +52,11 @@ export default function ForecastPage() {
       <div>
         <h1 className="text-2xl font-bold text-buddy-text">30-Day Demand Forecast</h1>
         <p className="text-sm text-buddy-muted mt-1">
-          AI-generated forecasts with confidence bands and data quality notes
+          P10–P90 ranges, stockout-corrected history and data-quality notes — estimates, not certainties
         </p>
       </div>
+
+      <BacktestCard />
 
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
