@@ -11,6 +11,11 @@ const EmergencyAlertSystem = dynamic(
   { ssr: false }
 );
 
+const IntroOverlay = dynamic(
+  () => import("@/components/IntroOverlay").then((m) => m.IntroOverlay),
+  { ssr: false }
+);
+
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const jetbrains = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains" });
 
@@ -33,6 +38,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className={`${inter.variable} ${jetbrains.variable} font-sans`}>
+        <IntroOverlay />
         <Shell>
           <EmergencyAlertSystem />
           {children}
