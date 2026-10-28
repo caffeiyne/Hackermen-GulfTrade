@@ -1,402 +1,401 @@
 """
-Recommender — proposes cost-effective stock transfers and replenishment changes.
+Recommender — cost-effective stock transfers and replenishment advice.
 
-For each shortage flag, searches for excess stock at other warehouses and
-evaluates whether a transfer is economically beneficial:
+Economics are expected-value, not point-forecast:
+  lost sales at a location = margin x E[max(D - stock, 0)],  D ~ N(P50, sd)
+so uncertain demand is never treated as guaranteed.
 
-  net_benefit = expected_shortage_cost_avoided - transfer_cost - holding_cost_delta
+Allocation (per SKU), in small batches:
+  * candidates = (source, destination) where the destination is short,
+    the route exists and is not blocked;
+  * a batch is moved along the pair with the highest marginal net benefit:
+        margin x (lost sales avoided at destination, only for demand AFTER
+                  the transfer arrives)
+      - margin x (extra lost sales created at the source)
+      + holding cost saved at source on true surplus
+      - holding cost at destination
+      - transfer cost
+  * stop when no pair has positive marginal benefit.
+Hard constraints: only physical on-hand stock moves (not inbound), and the
+source keeps at least its own P50 forecast + safety stock.
 
-Constraints checked:
-  - Source warehouse must have enough stock above its own safety stock
-  - Transfer route must exist and not be disrupted
-  - Transfer lead time must arrive before shortage is projected
-  - One deliberately unattractive transfer should be rejected (cost > benefit)
+Each destination's gap is filled once, by the cheapest adequate source. Options
+that were evaluated but not chosen are returned as "Not Recommended" with the
+reason (blocked route, source can't spare stock, cost > benefit, need already
+covered).
 
-Ranking: recommendations sorted by net_benefit descending.
+Impact: baseline (do nothing) vs plan, both scored with the same expected-loss
+model, so before/after numbers are in the same units and comparable.
 """
 
+from __future__ import annotations
+
 import logging
-from datetime import date, timedelta
-from decimal import Decimal
-from typing import Optional
+import math
 
 from app.db import get_conn
-from app.ai.forecaster import forecast_all
-from app.ai.imbalance_detector import detect_imbalances
+from app.ai.forecaster import forecast_all, Z90
+from app.ai.planning import (
+    HORIZON_DAYS, load_context, expected_short, position_after_leadtime,
+)
 
 logger = logging.getLogger(__name__)
 
+BATCH = 5                 # units per allocation step
+MIN_NET_BENEFIT = 25.0    # AED — below this a transfer isn't worth the handling effort
+MAX_REJECTED_SHOWN = 12
 
-async def generate_recommendations():
-    """
-    Generate ranked transfer recommendations.
 
-    Returns list of recommendation dicts + before/after impact assessment.
-    """
-    forecasts = await forecast_all()
+def _surplus_cost(p, stock):
+    """30-day holding cost of stock above P90 demand + safety (true surplus)."""
+    return max(0.0, stock - (p["p90"] + p["safety"])) * p["st"]["daily_holding_cost"] * HORIZON_DAYS
 
+
+def _dest_loss(mu, sd, stock, incoming):
+    """Expected units short at destination given incoming = [(qty, lead_days)]."""
+    if not incoming:
+        return expected_short(mu, sd, stock)
+    # Approximation: all incoming lands at the latest arrival among them
+    lead = max(l for _, l in incoming)
+    qty = sum(q for q, _ in incoming)
+    before, left, mu_r, sd_r = position_after_leadtime(mu, sd, stock, lead)
+    return before + expected_short(mu_r, sd_r, left + qty)
+
+
+async def generate_recommendations(ctx: dict = None, forecasts: list = None):
     async with get_conn() as conn:
-        sim_state = await conn.fetchrow("SELECT sim_clock FROM simulator.state WHERE id = 1")
-        sim_date = sim_state["sim_clock"] if sim_state and sim_state["sim_clock"] else date.today()
+        if ctx is None:
+            ctx = await load_context(conn)
+    if forecasts is None:
+        forecasts = await forecast_all(ctx=ctx)
+    fmap = {(f["sku_id"], f["warehouse_id"]): f for f in forecasts}
+    sim_date = ctx["sim_date"]
 
-        # Build forecast lookup: (sku_id, warehouse_id) -> forecast dict
-        forecast_map = {(f["sku_id"], f["warehouse_id"]): f for f in forecasts}
-
-        # Get all stock levels
-        stock_rows = await conn.fetch(
-            """
-            SELECT sl.sku_id, sl.warehouse_id, sl.available_qty, sl.reserved_qty,
-                   sl.safety_stock, sl.inbound_qty,
-                   s.unit_cost, s.unit_price, s.name as sku_name, s.product_type
-            FROM inventory.stock_levels sl
-            JOIN master.skus s ON s.sku_id = sl.sku_id
-            ORDER BY sl.sku_id, sl.warehouse_id
-            """
-        )
-
-        # Get transfer matrix
-        routes = await conn.fetch(
-            "SELECT * FROM master.transfer_matrix WHERE active = TRUE"
-        )
-        route_map = {}
-        for r in routes:
-            route_map[(r["from_warehouse"], r["to_warehouse"])] = r
-
-        # Get holding costs
-        holding_rows = await conn.fetch("SELECT sku_id, warehouse_id, daily_holding_cost FROM master.holding_costs")
-        holding_map = {(r["sku_id"], r["warehouse_id"]): r["daily_holding_cost"] for r in holding_rows}
-
-        # Get active disruptions
-        active_disruptions = await conn.fetch(
-            """
-            SELECT * FROM events.disruptions
-            WHERE is_active = TRUE
-              AND $1 BETWEEN start_date AND COALESCE(end_date, '2099-12-31'::date)
-            """,
-            sim_date,
-        )
-
-        recommendations = []
-        impact_metrics = []
-        baseline_comparison = None
-
-        # Identify shortages (destinations needing stock)
-        shortages = []
-        for stock_row in stock_rows:
-            key = (stock_row["sku_id"], stock_row["warehouse_id"])
-            f = forecast_map.get(key)
-            if not f:
-                continue
-
-            available = stock_row["available_qty"]
-            reserved = stock_row["reserved_qty"]
-            safety = stock_row["safety_stock"]
-            inbound = stock_row["inbound_qty"]
-            forecast_30d = f["forecast_qty_30d"]
-
-            net_available = available - reserved
-            projected = net_available + inbound - forecast_30d
-
-            if projected < safety:
-                shortfall = safety - projected
-                shortages.append({
-                    "sku_id": stock_row["sku_id"],
-                    "warehouse_id": stock_row["warehouse_id"],
-                    "sku_name": stock_row["sku_name"],
-                    "product_type": stock_row["product_type"],
-                    "available": available,
-                    "reserved": reserved,
-                    "safety": safety,
-                    "inbound": inbound,
-                    "forecast_30d": forecast_30d,
-                    "shortfall": shortfall,
-                    "unit_price": stock_row["unit_price"],
-                    "unit_cost": stock_row["unit_cost"],
-                    "confidence_level": f["confidence_level"],
-                })
-
-        # Identify excess (sources of stock)
-        excess_sources = []
-        for stock_row in stock_rows:
-            key = (stock_row["sku_id"], stock_row["warehouse_id"])
-            f = forecast_map.get(key)
-            if not f:
-                continue
-
-            available = stock_row["available_qty"]
-            reserved = stock_row["reserved_qty"]
-            safety = stock_row["safety_stock"]
-            inbound = stock_row["inbound_qty"]
-            forecast_30d = f["forecast_qty_30d"]
-
-            # Excess = available above what's needed for forecast + safety + buffer
-            needed = forecast_30d + safety
-            excess = available - needed - reserved
-            if excess > 0:
-                excess_sources.append({
-                    "sku_id": stock_row["sku_id"],
-                    "warehouse_id": stock_row["warehouse_id"],
-                    "sku_name": stock_row["sku_name"],
-                    "available": available,
-                    "reserved": reserved,
-                    "safety": safety,
-                    "inbound": inbound,
-                    "forecast_30d": forecast_30d,
-                    "excess": excess,
-                    "unit_cost": stock_row["unit_cost"],
-                    "unit_price": stock_row["unit_price"],
-                })
-
-        # Match shortages to excess sources
-        for shortage in shortages:
-            for source in excess_sources:
-                if shortage["sku_id"] != source["sku_id"]:
-                    continue
-                if source["warehouse_id"] == shortage["warehouse_id"]:
-                    continue
-
-                # Check route exists
-                route = route_map.get((source["warehouse_id"], shortage["warehouse_id"]))
-                if not route:
-                    continue
-
-                # Check route is not disrupted
-                route_key = f"{source['warehouse_id']}-{shortage['warehouse_id']}"
-                route_disrupted = False
-                route_extra_days = 0
-                for d in active_disruptions:
-                    if d["affected_routes"] and route_key in d["affected_routes"]:
-                        route_disrupted = True
-                        route_extra_days += 3  # estimated delay
-                    if shortage["sku_id"] in d["affected_skus"] and d["disruption_type"] == "supply_shortage":
-                        # Supply shortage doesn't affect inter-location transfers,
-                        # but does affect inbound ETA. Transfer still valid.
-                        pass
-
-                lead_time = route["lead_time_days"] + route_extra_days
-                cost_per_unit = route["cost_per_unit"]
-
-                # Calculate transfer quantity (don't transfer more than the shortfall or available excess)
-                transfer_qty = min(shortage["shortfall"], source["excess"])
-                if transfer_qty <= 0:
-                    continue
-
-                # Don't transfer more than source can spare (above its own safety)
-                source_spare = source["available"] - source["reserved"] - source["safety"] - source["forecast_30d"]
-                transfer_qty = min(transfer_qty, max(0, source_spare))
-                if transfer_qty <= 0:
-                    continue
-
-                total_transfer_cost = Decimal(transfer_qty) * Decimal(cost_per_unit)
-
-                # Expected benefit: avoiding lost sales
-                # Lost sale cost = quantity * (unit_price - unit_cost) [margin lost]
-                # Plus holding cost saved at source
-                margin_per_unit = shortage["unit_price"] - shortage["unit_cost"]
-                lost_sale_cost = Decimal(transfer_qty) * Decimal(margin_per_unit)
-
-                # Holding cost: 30 days * daily holding cost at source
-                holding_cost_source = holding_map.get((source["sku_id"], source["warehouse_id"]), Decimal("0.05"))
-                holding_saved = Decimal(transfer_qty) * Decimal(holding_cost_source) * Decimal(30)
-
-                # Holding cost increase at destination (but stock will sell, so less)
-                holding_cost_dest = holding_map.get((shortage["sku_id"], shortage["warehouse_id"]), Decimal("0.05"))
-                holding_increase = Decimal(transfer_qty) * Decimal(holding_cost_dest) * Decimal(15)  # ~15 days avg
-
-                expected_benefit = lost_sale_cost + holding_saved - holding_increase
-                net_benefit = expected_benefit - total_transfer_cost
-
-                # Check if lead time allows the transfer to arrive before shortage
-                # (shortage is projected within 30 days)
-                arrives_by = sim_date + timedelta(days=lead_time)
-                arrives_in_time = lead_time <= 30  # simplified check
-
-                constraints_checked = [
-                    f"Source has {source_spare} spare units above own safety+forecast",
-                    f"Route {route_key} active (cost {cost_per_unit}/unit, {route['lead_time_days']} days)",
-                    f"Transfer lead time: {lead_time} days (arrives: {arrives_by})",
-                ]
-
-                if route_disrupted:
-                    constraints_checked.append(f"Route disrupted — extra {route_extra_days} days added")
-                else:
-                    constraints_checked.append("Route not affected by active disruptions")
-
-                if not arrives_in_time:
-                    constraints_checked.append("WARNING: Transfer may arrive after shortage occurs")
-
-                is_feasible = net_benefit > 0 and arrives_in_time
-
-                recommendations.append({
-                    "recommendation_id": f"REC-{shortage['sku_id']}-{source['warehouse_id']}-{shortage['warehouse_id']}",
-                    "sku_id": shortage["sku_id"],
-                    "sku_name": shortage["sku_name"],
-                    "from_warehouse": source["warehouse_id"],
-                    "to_warehouse": shortage["warehouse_id"],
-                    "quantity": transfer_qty,
-                    "transfer_cost": float(total_transfer_cost),
-                    "expected_benefit": float(expected_benefit),
-                    "net_benefit": float(net_benefit),
-                    "lead_time_days": lead_time,
-                    "reason": (
-                        f"Transfer {transfer_qty} units of {shortage['sku_name']} from "
-                        f"{source['warehouse_id']} to {shortage['warehouse_id']} to cover "
-                        f"projected shortage of {shortfall}. "
-                        f"Net benefit: {float(net_benefit):.2f} AED."
-                    ),
-                    "constraints_checked": constraints_checked,
-                    "is_feasible": is_feasible,
-                    "confidence_level": shortage["confidence_level"],
-                    "route_disrupted": route_disrupted,
-                })
-
-        # Rank by net_benefit (descending), feasible first
-        recommendations.sort(key=lambda r: (r["is_feasible"], r["net_benefit"]), reverse=True)
-        for i, rec in enumerate(recommendations):
-            rec["rank"] = i + 1
-
-        # --- Impact assessment (before/after) ---
-        if recommendations:
-            feasible_recs = [r for r in recommendations if r["is_feasible"]]
-
-            total_shortage_before = sum(s["shortfall"] * float(s["unit_price"] - s["unit_cost"]) for s in shortages)
-            shortage_reduced = sum(r["quantity"] for r in feasible_recs)
-            total_shortage_after = max(0, total_shortage_before - shortage_reduced)
-
-            total_transfer_cost = sum(r["transfer_cost"] for r in feasible_recs)
-            total_benefit = sum(r["net_benefit"] for r in feasible_recs)
-
-            # --- Holding cost calculation ---
-            # Baseline: total daily holding cost across ALL stock (excess sits idle)
-            holding_cost_baseline_daily = sum(
-                float(r["available_qty"]) * float(holding_map.get((r["sku_id"], r["warehouse_id"]), Decimal("0.05")))
-                for r in stock_rows
-            )
-            # 30-day holding cost at baseline
-            holding_cost_baseline = holding_cost_baseline_daily * 30
-
-            # AI solution: transfers move stock from excess (high holding) to shortage (sells fast)
-            # Holding saved = stock removed from source * holding rate * 30 days
-            # Holding increase = stock added to destination * holding rate * ~15 days avg (sells through)
-            holding_saved_total = sum(
-                float(r["quantity"]) * float(holding_map.get((r["sku_id"], r["from_warehouse"]), Decimal("0.05"))) * 30
-                for r in feasible_recs
-            )
-            holding_increase_total = sum(
-                float(r["quantity"]) * float(holding_map.get((r["sku_id"], r["to_warehouse"]), Decimal("0.05"))) * 15
-                for r in feasible_recs
-            )
-            holding_cost_ai = holding_cost_baseline - holding_saved_total + holding_increase_total
-
-            impact_metrics = [
-                {
-                    "metric": "Expected shortage exposure (AED)",
-                    "before": float(total_shortage_before),
-                    "after": float(total_shortage_after),
-                    "unit": "AED",
-                    "delta": float(total_shortage_after - total_shortage_before),
-                    "is_improvement": total_shortage_after < total_shortage_before,
-                },
-                {
-                    "metric": "Units in shortage risk",
-                    "before": sum(s["shortfall"] for s in shortages),
-                    "after": max(0, sum(s["shortfall"] for s in shortages) - shortage_reduced),
-                    "unit": "units",
-                    "delta": -shortage_reduced,
-                    "is_improvement": shortage_reduced > 0,
-                },
-                {
-                    "metric": "Holding cost (30-day, AED)",
-                    "before": round(holding_cost_baseline, 2),
-                    "after": round(holding_cost_ai, 2),
-                    "unit": "AED",
-                    "delta": round(holding_cost_ai - holding_cost_baseline, 2),
-                    "is_improvement": holding_cost_ai < holding_cost_baseline,
-                },
-                {
-                    "metric": "Net economic benefit (AED)",
-                    "before": 0.0,
-                    "after": float(total_benefit),
-                    "unit": "AED",
-                    "delta": float(total_benefit),
-                    "is_improvement": total_benefit > 0,
-                },
-                {
-                    "metric": "Transfer cost (AED)",
-                    "before": 0.0,
-                    "after": float(total_transfer_cost),
-                    "unit": "AED",
-                    "delta": float(total_transfer_cost),
-                    "is_improvement": False,
-                },
-            ]
-
-        # --- Baseline comparison ---
-        # Baseline = "do nothing" approach: Sara uses simple recent average demand
-        # and does no proactive transfers. She accepts all shortage losses.
-        baseline_shortage_aed = float(total_shortage_before)
-        baseline_transfer_cost = 0.0
-        baseline_net = -baseline_shortage_aed  # net = 0 benefit - all shortage losses
-
-        ai_shortage_aed = float(total_shortage_after)
-        ai_transfer_cost = float(total_transfer_cost)
-        ai_net = float(total_benefit)  # already net of transfer cost
-
-        baseline_comparison = {
-            "baseline": {
-                "label": "Baseline (Do Nothing)",
-                "description": "Recent average demand, no proactive transfers — Sara accepts all shortage losses",
-                "shortage_exposure_aed": round(baseline_shortage_aed, 2),
-                "transfer_cost_aed": round(baseline_transfer_cost, 2),
-                "net_position_aed": round(baseline_net, 2),
-                "holding_cost_aed": round(holding_cost_baseline, 2),
-                "units_at_risk": sum(s["shortfall"] for s in shortages),
-                "service_level_pct": round(
-                    100 * (1 - sum(s["shortfall"] for s in shortages) /
-                           max(1, sum(s["shortfall"] for s in shortages) + sum(s["available"] for s in shortages))),
-                    1
-                ),
-            },
-            "ai_solution": {
-                "label": "AI Solution (Proactive Transfers)",
-                "description": "Demand forecast with stockout correction + cost-benefit ranked transfers",
-                "shortage_exposure_aed": round(ai_shortage_aed, 2),
-                "transfer_cost_aed": round(ai_transfer_cost, 2),
-                "net_position_aed": round(ai_net, 2),
-                "holding_cost_aed": round(holding_cost_ai, 2),
-                "units_at_risk": max(0, sum(s["shortfall"] for s in shortages) - shortage_reduced),
-                "service_level_pct": round(
-                    100 * (1 - max(0, sum(s["shortfall"] for s in shortages) - shortage_reduced) /
-                           max(1, sum(s["shortfall"] for s in shortages) + sum(s["available"] for s in shortages))),
-                    1
-                ),
-            },
-            "improvement": {
-                "shortage_reduction_aed": round(baseline_shortage_aed - ai_shortage_aed, 2),
-                "shortage_reduction_pct": round(
-                    100 * (baseline_shortage_aed - ai_shortage_aed) / max(1, baseline_shortage_aed), 1
-                ) if baseline_shortage_aed > 0 else 0,
-                "net_benefit_aed": round(ai_net - baseline_net, 2),
-                "holding_cost_savings_aed": round(holding_cost_baseline - holding_cost_ai, 2),
-                "service_level_delta_pct": round(
-                    (100 * (1 - max(0, sum(s["shortfall"] for s in shortages) - shortage_reduced) /
-                            max(1, sum(s["shortfall"] for s in shortages) + sum(s["available"] for s in shortages))))
-                    - (100 * (1 - sum(s["shortfall"] for s in shortages) /
-                            max(1, sum(s["shortfall"] for s in shortages) + sum(s["available"] for s in shortages)))),
-                    1
-                ),
-            },
+    # ---- per-location planning position ------------------------------------
+    pos = {}
+    for key, st in ctx["stock"].items():
+        f = fmap.get(key)
+        if not f:
+            continue
+        net = st["available_qty"] - st["reserved_qty"]
+        usable = net + ctx["inbound"][key]["in_horizon"]
+        mu, sd = float(f["forecast_qty_30d"]), float(f.get("forecast_sd") or 0)
+        pos[key] = {
+            "st": st, "f": f, "mu": mu, "sd": sd, "net": net, "usable": usable,
+            "safety": st["safety_stock"],
+            "short": usable - mu < st["safety_stock"],
+            "need": max(0, int(math.ceil(st["safety_stock"] - (usable - mu)))),
+            "spare": max(0, min(net, int(usable - mu - st["safety_stock"]))),
+            "p90": f["confidence_high"],
         }
 
+    skus = sorted({k[0] for k in pos})
+    recommendations, rejected = [], []
+
+    for sku in skus:
+        locs = {k[1]: v for k, v in pos.items() if k[0] == sku}
+        dests = [w for w, p in locs.items() if p["short"]]
+        if not dests:
+            continue
+        sources = [w for w in locs if w not in dests]
+        moved = {}                         # (src, dst) -> qty
+        out_of = {w: 0 for w in locs}      # units leaving each source
+        into = {w: [] for w in locs}       # dst -> [(qty, lead)]
+
+        def pair_ok(s, d):
+            r = ctx["routes"].get((s, d))
+            return r is not None and not r["blocked"]
+
+        def marginal(s, d, q):
+            r = ctx["routes"][(s, d)]
+            P, S = locs[d], locs[s]
+            m_d, m_s = P["st"]["margin"], S["st"]["margin"]
+            cur_in = into[d]
+            loss_d0 = _dest_loss(P["mu"], P["sd"], P["usable"], cur_in)
+            loss_d1 = _dest_loss(P["mu"], P["sd"], P["usable"], cur_in + [(q, r["lead_days"])])
+            src_stock = S["usable"] - out_of[s]
+            loss_s0 = expected_short(S["mu"], S["sd"], src_stock)
+            loss_s1 = expected_short(S["mu"], S["sd"], src_stock - q)
+            dst_stock = P["usable"] + sum(qq for qq, _ in cur_in)
+            hold = (_surplus_cost(S, src_stock) - _surplus_cost(S, src_stock - q)
+                    - (_surplus_cost(P, dst_stock + q) - _surplus_cost(P, dst_stock)))
+            benefit = m_d * (loss_d0 - loss_d1) - m_s * (loss_s1 - loss_s0) + hold
+            return benefit - q * r["cost_per_unit"], benefit
+
+        # ---- greedy allocation ----
+        while True:
+            best = None
+            for s in sources:
+                cap = locs[s]["spare"] - out_of[s]
+                if cap <= 0:
+                    continue
+                for d in dests:
+                    if not pair_ok(s, d):
+                        continue
+                    remaining_need = locs[d]["need"] - sum(q for q, _ in into[d])
+                    q = min(BATCH, cap, remaining_need)
+                    if q <= 0:
+                        continue
+                    net_b, _ = marginal(s, d, q)
+                    if net_b > 0 and (best is None or net_b / q > best[0]):
+                        best = (net_b / q, s, d, q)
+            if best is None:
+                break
+            _, s, d, q = best
+            moved[(s, d)] = moved.get((s, d), 0) + q
+            out_of[s] += q
+            into[d].append((q, ctx["routes"][(s, d)]["lead_days"]))
+
+        # ---- materialise chosen transfers (exact totals) ----
+        for (s, d), q in moved.items():
+            r = ctx["routes"][(s, d)]
+            P, S = locs[d], locs[s]
+            others_in = [(qq, ctx["routes"][(ss, dd)]["lead_days"]) for (ss, dd), qq in moved.items() if dd == d and ss != s]
+            m_d, m_s = P["st"]["margin"], S["st"]["margin"]
+            avoided = (_dest_loss(P["mu"], P["sd"], P["usable"], others_in)
+                       - _dest_loss(P["mu"], P["sd"], P["usable"], others_in + [(q, r["lead_days"])]))
+            src_after = S["usable"] - out_of[s]
+            created = expected_short(S["mu"], S["sd"], src_after) - expected_short(S["mu"], S["sd"], src_after + q)
+            dst_before = P["usable"] + sum(qq for qq, _ in others_in)
+            hold = (_surplus_cost(S, src_after + q) - _surplus_cost(S, src_after)
+                    - (_surplus_cost(P, dst_before + q) - _surplus_cost(P, dst_before)))
+            benefit = m_d * avoided - m_s * created + hold
+            cost = q * r["cost_per_unit"]
+            # Downside: same transfer if destination demand comes in at P10
+            mu_lo = max(0.0, P["mu"] - Z90 * P["sd"])
+            avoided_lo = (_dest_loss(mu_lo, P["sd"], P["usable"], others_in)
+                          - _dest_loss(mu_lo, P["sd"], P["usable"], others_in + [(q, r["lead_days"])]))
+            downside_net = m_d * avoided_lo - m_s * created + hold - cost
+
+            constraints = [
+                f"Destination short: usable {P['usable']} vs forecast {int(P['mu'])} (P10–P90 {P['f']['confidence_low']}–{P['p90']}) + safety {P['safety']}",
+                f"Source keeps {int(src_after)} ≥ its own forecast {int(S['mu'])} + safety {S['safety']} (moves on-hand stock only)",
+                f"Route {r['route_key']}: {r['cost_per_unit']:.2f} AED/unit, {r['lead_days']} day(s) lead time"
+                + (f" (base {r['base_lead_days']}d + {r['extra_days']}d disruption)" if r["extra_days"] else ""),
+                f"Expected lost sales avoided at {d}: {avoided:.0f} units (only demand after arrival counts)",
+                f"If demand lands at P10, net benefit would be {downside_net:.0f} AED",
+            ] + r["notes"] + ctx["inbound"][(sku, d)]["notes"]
+
+            recommendations.append({
+                "recommendation_id": f"REC-{sku}-{s}-{d}",
+                "action_type": "transfer",
+                "sku_id": sku,
+                "sku_name": P["st"]["sku_name"],
+                "from_warehouse": s,
+                "to_warehouse": d,
+                "quantity": int(q),
+                "transfer_cost": round(cost, 2),
+                "expected_benefit": round(benefit, 2),
+                "net_benefit": round(benefit - cost, 2),
+                "downside_net_benefit": round(downside_net, 2),
+                "expected_units_saved": round(avoided, 1),
+                "lead_time_days": r["lead_days"],
+                "reason": (
+                    f"Move {q} units of {P['st']['sku_name']} {s}→{d}. {d} is expected to be "
+                    f"{expected_short(P['mu'], P['sd'], P['usable']):.0f} units short without action; this avoids ~{avoided:.0f} "
+                    f"lost sales for {cost:.0f} AED transport. Expected net {benefit - cost:.0f} AED "
+                    f"(P10 case {downside_net:.0f} AED)."
+                ),
+                "constraints_checked": constraints,
+                "is_feasible": True,
+                "confidence_level": P["f"]["confidence_level"],
+                "route_disrupted": bool(r["extra_days"] or r["blocked"]),
+                "rejection_reason": None,
+            })
+
+        # ---- evaluated but not chosen ----
+        for d in dests:
+            for s in locs:
+                if s == d or (s, d) in moved:
+                    continue
+                r = ctx["routes"].get((s, d))
+                if r is None:
+                    continue
+                P, S = locs[d], locs[s]
+                covered = sum(q for q, _ in into[d])
+                nominal = max(BATCH, min(P["need"], max(S["net"], 0)))
+                cost = nominal * r["cost_per_unit"]
+                if r["blocked"]:
+                    reason = f"Route {r['route_key']} blocked — " + "; ".join(r["notes"])
+                    net_b, benefit, cost = 0.0, 0.0, 0.0
+                elif S["spare"] - out_of.get(s, 0) <= 0:
+                    if S["net"] <= 0:
+                        continue
+                    reason = (f"{s} cannot spare stock: it needs {int(S['mu'])} (forecast) + {S['safety']} "
+                              f"(safety) and has {S['usable']} usable")
+                    net_b, benefit, cost = 0.0, 0.0, 0.0
+                else:
+                    net_b, benefit = marginal(s, d, min(nominal, S["spare"] - out_of[s]))
+                    if covered >= P["need"]:
+                        reason = (f"Gap at {d} already covered by a cheaper/faster source; "
+                                  f"extra units here would cost {cost:.0f} AED for ~{max(benefit,0):.0f} AED benefit")
+                    else:
+                        reason = (f"Transfer cost {r['cost_per_unit']:.2f} AED/unit over {r['lead_days']}d "
+                                  f"exceeds expected benefit (net {net_b:.0f} AED)")
+                rejected.append({
+                    "recommendation_id": f"REC-{sku}-{s}-{d}",
+                    "action_type": "transfer",
+                    "sku_id": sku,
+                    "sku_name": P["st"]["sku_name"],
+                    "from_warehouse": s,
+                    "to_warehouse": d,
+                    "quantity": int(nominal),
+                    "transfer_cost": round(cost, 2),
+                    "expected_benefit": round(benefit, 2),
+                    "net_benefit": round(net_b, 2),
+                    "downside_net_benefit": None,
+                    "expected_units_saved": 0,
+                    "lead_time_days": r["lead_days"],
+                    "reason": f"Not recommended: {reason}.",
+                    "constraints_checked": [reason] + r["notes"],
+                    "is_feasible": False,
+                    "confidence_level": P["f"]["confidence_level"],
+                    "route_disrupted": bool(r["extra_days"] or r["blocked"]),
+                    "rejection_reason": reason,
+                    "_priority": (0 if r["blocked"] else 1 if ("exceeds" in reason or "covered" in reason) else 2),
+                })
+
+    # Cautious: tiny moves are listed but not recommended
+    keep = []
+    for x in recommendations:
+        if x["net_benefit"] < MIN_NET_BENEFIT:
+            reason = (f"Expected net benefit {x['net_benefit']:.0f} AED is below the {MIN_NET_BENEFIT:.0f} AED "
+                      f"minimum — not worth the handling effort")
+            x.update(is_feasible=False, rejection_reason=reason, reason=f"Not recommended: {reason}.",
+                     _priority=1)
+            x["constraints_checked"] = [reason] + x["constraints_checked"]
+            rejected.append(x)
+        else:
+            keep.append(x)
+    recommendations = keep
+    recommendations.sort(key=lambda x: x["net_benefit"], reverse=True)
+    rejected.sort(key=lambda x: (x["_priority"], x["net_benefit"]))
+    rejected = rejected[:MAX_REJECTED_SHOWN]
+    for x in rejected:
+        x.pop("_priority", None)
+    all_recs = recommendations + rejected
+    for i, rec in enumerate(all_recs):
+        rec["rank"] = i + 1
+
+    impact, baseline = _impact(ctx, pos, recommendations)
+    replenishment = _replenishment(ctx, pos, recommendations)
+
     return {
-        "recommendations": recommendations,
-        "impact_assessment": impact_metrics,
-        "baseline_comparison": baseline_comparison,
+        "recommendations": all_recs,
+        "replenishment_actions": replenishment,
+        "impact_assessment": impact,
+        "baseline_comparison": baseline,
         "summary": {
-            "total_recommendations": len(recommendations),
-            "feasible_recommendations": sum(1 for r in recommendations if r["is_feasible"]),
-            "total_net_benefit": sum(r["net_benefit"] for r in recommendations if r["is_feasible"]),
-            "shortages_identified": len(shortages),
-            "excess_sources_found": len(excess_sources),
+            "total_recommendations": len(all_recs),
+            "feasible_recommendations": len(recommendations),
+            "rejected_options_shown": len(rejected),
+            "total_net_benefit": round(sum(r["net_benefit"] for r in recommendations), 2),
+            "shortages_identified": sum(1 for p in pos.values() if p["short"]),
+            "excess_sources_found": sum(1 for p in pos.values() if p["spare"] > 0),
+            "as_of": str(sim_date),
         },
     }
+
+
+def _score(ctx, pos, transfers):
+    """Expected lost units/AED and excess holding for a set of transfers."""
+    incoming, outgoing = {}, {}
+    for r in transfers:
+        incoming.setdefault((r["sku_id"], r["to_warehouse"]), []).append((r["quantity"], r["lead_time_days"]))
+        outgoing[(r["sku_id"], r["from_warehouse"])] = outgoing.get((r["sku_id"], r["from_warehouse"]), 0) + r["quantity"]
+    lost_units = lost_aed = demand = excess_hold = 0.0
+    for key, p in pos.items():
+        stock = p["usable"] - outgoing.get(key, 0)
+        u = _dest_loss(p["mu"], p["sd"], stock, incoming.get(key, []))
+        lost_units += u
+        lost_aed += u * p["st"]["margin"]
+        demand += p["mu"]
+        on_hand_after = stock + sum(q for q, _ in incoming.get(key, []))
+        excess_hold += max(0.0, on_hand_after - (p["p90"] + p["safety"])) * p["st"]["daily_holding_cost"] * HORIZON_DAYS
+    fill = 100 * (1 - lost_units / demand) if demand else 100.0
+    return {"lost_units": lost_units, "lost_aed": lost_aed, "excess_hold": excess_hold, "fill": fill}
+
+
+def _impact(ctx, pos, transfers):
+    b = _score(ctx, pos, [])
+    a = _score(ctx, pos, transfers)
+    t_cost = sum(r["transfer_cost"] for r in transfers)
+    b_net = -(b["lost_aed"] + b["excess_hold"])
+    a_net = -(a["lost_aed"] + a["excess_hold"] + t_cost)
+
+    def m(metric, before, after, unit, better_low=True):
+        return {"metric": metric, "before": round(before, 1), "after": round(after, 1), "unit": unit,
+                "delta": round(after - before, 1),
+                "is_improvement": (after < before) if better_low else (after > before)}
+
+    impact = [
+        m("Expected lost sales (AED margin)", b["lost_aed"], a["lost_aed"], "AED"),
+        m("Expected units short", b["lost_units"], a["lost_units"], "units"),
+        m("Holding cost on surplus stock, 30d (AED)", b["excess_hold"], a["excess_hold"], "AED"),
+        m("Transfer cost (AED)", 0.0, t_cost, "AED"),
+        m("Total expected cost (AED)", -b_net, -a_net, "AED"),
+        m("Expected fill rate (%)", b["fill"], a["fill"], "%", better_low=False),
+    ]
+    baseline = {
+        "method": ("Both columns scored with the same model: expected lost margin = margin x E[max(demand - stock, 0)] "
+                   "with demand ~ forecast distribution; plus 30-day holding cost on stock above P90 + safety; plus transfer cost."),
+        "baseline": {
+            "label": "Baseline (do nothing)",
+            "description": "No proactive transfers; current stock and inbound only",
+            "shortage_exposure_aed": round(b["lost_aed"], 2),
+            "transfer_cost_aed": 0.0,
+            "excess_holding_aed": round(b["excess_hold"], 2),
+            "holding_cost_aed": round(b["excess_hold"], 2),
+            "net_position_aed": round(b_net, 2),
+            "units_at_risk": round(b["lost_units"], 1),
+            "service_level_pct": round(b["fill"], 1),
+        },
+        "ai_solution": {
+            "label": "Agent plan (approved transfers)",
+            "description": f"{len(transfers)} transfer(s) ranked by expected net benefit; all need planner approval",
+            "shortage_exposure_aed": round(a["lost_aed"], 2),
+            "transfer_cost_aed": round(t_cost, 2),
+            "excess_holding_aed": round(a["excess_hold"], 2),
+            "holding_cost_aed": round(a["excess_hold"], 2),
+            "net_position_aed": round(a_net, 2),
+            "units_at_risk": round(a["lost_units"], 1),
+            "service_level_pct": round(a["fill"], 1),
+        },
+        "improvement": {
+            "shortage_reduction_aed": round(b["lost_aed"] - a["lost_aed"], 2),
+            "shortage_reduction_pct": round(100 * (b["lost_aed"] - a["lost_aed"]) / b["lost_aed"], 1) if b["lost_aed"] > 0 else 0,
+            "net_benefit_aed": round(a_net - b_net, 2),
+            "holding_cost_savings_aed": round(b["excess_hold"] - a["excess_hold"], 2),
+            "service_level_delta_pct": round(a["fill"] - b["fill"], 1),
+        },
+    }
+    return impact, baseline
+
+
+def _replenishment(ctx, pos, transfers):
+    """Advisory only (purchasing is out of scope): where transfers can't close the gap."""
+    incoming = {}
+    for r in transfers:
+        incoming.setdefault((r["sku_id"], r["to_warehouse"]), []).append((r["quantity"], r["lead_time_days"]))
+    out = []
+    for key, p in pos.items():
+        if not p["short"]:
+            continue
+        residual = _dest_loss(p["mu"], p["sd"], p["usable"], incoming.get(key, []))
+        if residual < 5:
+            continue
+        lead = int(p["st"].get("supplier_lead_days") or 14)
+        out.append({
+            "action_type": "replenishment",
+            "sku_id": key[0], "warehouse_id": key[1], "sku_name": p["st"]["sku_name"],
+            "suggested_qty": int(math.ceil(p["need"] - sum(q for q, _ in incoming.get(key, [])))),
+            "supplier_lead_days": lead,
+            "expected_units_short_after_transfers": round(residual, 1),
+            "arrives_within_horizon": lead < HORIZON_DAYS,
+            "notes": ctx["inbound"][key]["notes"],
+            "reason": (f"Transfers leave ~{residual:.0f} units of expected shortfall at {key[1]}. "
+                       f"Raise or expedite a PO (supplier lead {lead}d)" + ("" if lead < HORIZON_DAYS else " — would land after this horizon") + "."),
+            "requires_approval": True,
+        })
+    out.sort(key=lambda x: -x["expected_units_short_after_transfers"])
+    return out

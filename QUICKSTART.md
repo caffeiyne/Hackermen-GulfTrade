@@ -126,8 +126,8 @@ Open http://localhost:3000
 
 ### 4. Inject Black Swan Events (1.5 min)
 - On the `/simulator` page, scroll to the **Black Swan Events** panel
-- Click **"Port Strike"** → watch the disruption propagate to the dashboard
-- Click **"Demand Spike"** → earbuds demand surges, new shortage flags appear
+- Click **"Road Closure"** → DXB→AUH options become Not Recommended (route blocked); agent re-routes via SHJ where it still pays
+- Click **"Demand Spike"** → earbud forecasts rise for the listed SKUs only, labelled as a supplied assumption
 - Click **"Flash Flood"** → DXB-SHJ transfers frozen
 - Go to `/imbalances` → see how the flags changed
 - Go to `/timeline` → see the full event audit log
@@ -143,12 +143,12 @@ Open http://localhost:3000
 
 | Button | Type | What Happens |
 |---|---|---|
-| **Chip Shortage** | supply_shortage | GaN charger SKUs (CHG-UC-002, CHG-UC-003) inbound ETAs slip |
-| **Port Strike** | shipping_delay | All Dubai inbound delayed, 4 SKU POs affected |
-| **Road Closure** | shipping_delay | DXB-AUH highway blocked for 5 days |
-| **Demand Spike** | supply_shortage | Earbuds demand 5x — unexpected viral surge |
-| **Warehouse Fire** | supply_shortage | Sharjah power bank stock destroyed |
-| **Flash Flood** | shipping_delay | DXB-SHJ corridor impassable for 7 days |
+| **Chip Shortage** | supply_shortage | GaN charger POs (CHG-UC-002, CHG-UC-003) slip +14 days (labelled assumption) |
+| **Port Strike** | shipping_delay | Inbound charger POs (4 SKUs) held until the strike ends |
+| **Road Closure** | shipping_delay (critical) | DXB↔AUH route blocked for 5 days — agent re-routes or declines |
+| **Demand Spike** | demand_surge | Supplied signal: x2 demand for 10 days on EAR-001/EAR-002 |
+| **Supplier Recall** | supply_shortage (critical) | Power bank POs slip +21 days — replenishment advice appears |
+| **Flash Flood** | shipping_delay (high) | +7 days transit on DXB↔SHJ |
 | **Custom** | either | Build your own disruption with any SKUs, severity, duration |
 
 ---

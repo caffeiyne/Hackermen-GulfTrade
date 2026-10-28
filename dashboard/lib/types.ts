@@ -118,14 +118,14 @@ export interface TransferProposal {
 
 export interface Disruption {
   disruption_id?: string;
-  disruption_type: "supply_shortage" | "shipping_delay";
+  disruption_type: "supply_shortage" | "shipping_delay" | "demand_surge";
   title: string;
   description: string | null;
   affected_skus: string[];
   affected_routes: string[] | null;
   start_date: string;
   end_date: string | null;
-  severity: "low" | "medium" | "high";
+  severity: "low" | "medium" | "high" | "critical";
   source: string;
   is_active: boolean;
 }
@@ -173,6 +173,9 @@ export interface Recommendation {
   rank: number;
   confidence_level: string;
   route_disrupted?: boolean;
+  downside_net_benefit?: number | null;
+  expected_units_saved?: number;
+  rejection_reason?: string | null;
 }
 
 export interface ImpactAssessment {

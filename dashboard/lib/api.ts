@@ -178,7 +178,7 @@ export const api = {
 
   // --- AI ---
   getRecommendations: () =>
-    fetchAPI<{ recommendations: Recommendation[]; impact_assessment: ImpactAssessment[]; summary: any; baseline_comparison?: any }>(
+    fetchAPI<{ recommendations: Recommendation[]; impact_assessment: ImpactAssessment[]; summary: any; baseline_comparison?: any; replenishment_actions?: any[] }>(
       "/api/recommendations"
     ),
 
@@ -208,10 +208,25 @@ export const api = {
   injectDisruption: (data: {
     disruption_type: string;
     title: string;
+    description?: string;
     affected_skus: string[];
+    affected_routes?: string[];
     severity: string;
     duration_days: number;
   }) => fetchAPI("/api/simulator/inject", { method: "POST", body: JSON.stringify(data) }),
+
+  // Change a disruption assumption once — the whole plan is recomputed
+  updateDisruption: (
+    disruptionId: string,
+    data: { is_active?: boolean; severity?: string; end_date?: string; note?: string; changed_by?: string }
+  ) => fetchAPI<Disruption>(`/api/disruptions/${disruptionId}`, { method: "PATCH", body: JSON.stringify(data) }),
+
+  // Correct a stock record once — the whole plan is recomputed
+  correctStock: (
+    skuId: string,
+    warehouseId: string,
+    data: { available_qty?: number; reserved_qty?: number; safety_stock?: number; inbound_qty?: number; note?: string; corrected_by?: string }
+  ) => fetchAPI<StockLevel>(`/api/inventory/${skuId}/${warehouseId}`, { method: "PATCH", body: JSON.stringify(data) }),
 
   getTimeline: (limit: number = 100) =>
     fetchAPI<AuditLogEntry[]>(`/api/simulator/timeline?limit=${limit}`),

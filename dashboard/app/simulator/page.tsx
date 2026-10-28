@@ -28,16 +28,20 @@ import { api } from "@/lib/api";
 import { useRealTime } from "@/lib/useRealTime";
 import { formatDate } from "@/lib/utils";
 import type { SimulatorStatus, ScenarioInfo, WSEvent } from "@/lib/types";
+import { PlannerControls } from "@/components/PlannerControls";
 
 // --- Pre-built "Black Swan" disruption presets for one-click demo injection ---
+// Each preset names exactly which SKUs and/or routes it affects. The engine
+// never extends a disruption to anything it does not list.
 interface BlackSwanPreset {
   id: string;
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   title: string;
-  disruption_type: "supply_shortage" | "shipping_delay";
+  disruption_type: "supply_shortage" | "shipping_delay" | "demand_surge";
   affected_skus: string[];
-  severity: "low" | "medium" | "high";
+  affected_routes?: string[];
+  severity: "low" | "medium" | "high" | "critical";
   duration_days: number;
   color: string;
   description: string;
@@ -54,19 +58,19 @@ const BLACK_SWANS: BlackSwanPreset[] = [
     severity: "high",
     duration_days: 21,
     color: "red",
-    description: "Supplier can't fulfill GaN charger POs for 3 weeks",
+    description: "GaN charger POs slip +14 days (assumption). Other chargers untouched.",
   },
   {
     id: "port-strike",
     icon: PackageX,
     label: "Port Strike",
-    title: "Jebel Ali port strike — all Dubai inbound delayed",
+    title: "Jebel Ali port strike — charger containers held",
     disruption_type: "shipping_delay",
     affected_skus: ["CHG-UC-001", "CHG-UC-002", "CHG-UC-003", "CHG-UC-004"],
     severity: "high",
     duration_days: 14,
     color: "orange",
-    description: "Dubai port operations halted — inbound containers stuck",
+    description: "Inbound charger POs held until the strike ends. Road transfers still run.",
   },
   {
     id: "road-closure",
@@ -75,46 +79,48 @@ const BLACK_SWANS: BlackSwanPreset[] = [
     title: "DXB-AUH highway closure — transfer route blocked",
     disruption_type: "shipping_delay",
     affected_skus: [],
-    severity: "medium",
+    affected_routes: ["DXB-AUH", "AUH-DXB"],
+    severity: "critical",
     duration_days: 5,
     color: "amber",
-    description: "Major highway closed for 5 days — inter-warehouse transfers frozen",
+    description: "DXB↔AUH blocked for 5 days. Watch the agent re-route via Sharjah — or decline.",
   },
   {
     id: "demand-spike",
     icon: Flame,
     label: "Demand Spike",
-    title: "Viral social media surge — earbuds demand 5x",
-    disruption_type: "supply_shortage",
-    affected_skus: ["EB-WS-001", "EB-WS-002"],
+    title: "Viral social media surge — earbuds demand x2",
+    disruption_type: "demand_surge",
+    affected_skus: ["EAR-001", "EAR-002"],
     severity: "medium",
     duration_days: 10,
     color: "purple",
-    description: "TikTok trend causes unexpected demand spike across all warehouses",
+    description: "Supplied demand signal: x2 for 10 days on two earbud SKUs (labelled assumption).",
   },
   {
-    id: "warehouse-fire",
+    id: "supplier-recall",
     icon: Bomb,
-    label: "Warehouse Fire",
-    title: "Sharjah warehouse fire — stock destroyed",
+    label: "Supplier Recall",
+    title: "Power bank supplier recall — replenishment halted",
     disruption_type: "supply_shortage",
-    affected_skus: ["PB-PW-001", "PB-PW-002", "PB-PW-003", "PB-PW-004"],
-    severity: "high",
+    affected_skus: ["PWB-001", "PWB-002", "PWB-003", "PWB-004"],
+    severity: "critical",
     duration_days: 30,
     color: "red",
-    description: "Fire damages Sharjah power bank inventory — emergency replenishment needed",
+    description: "Power bank POs slip +21 days. Shows replenishment advice when transfers can't cover.",
   },
   {
     id: "flood",
     icon: Waves,
     label: "Flash Flood",
-    title: "Flash floods — DXB-SHJ corridor impassable",
+    title: "Flash floods — DXB-SHJ corridor slowed",
     disruption_type: "shipping_delay",
     affected_skus: [],
+    affected_routes: ["DXB-SHJ", "SHJ-DXB"],
     severity: "high",
     duration_days: 7,
     color: "blue",
-    description: "Unprecedented flooding blocks all transfers between Dubai and Sharjah",
+    description: "+7 days transit on DXB↔SHJ. Transfers there only stay if still worth it.",
   },
 ];
 
@@ -204,7 +210,9 @@ export default function SimulatorPage() {
       await api.injectDisruption({
         disruption_type: preset.disruption_type,
         title: preset.title,
+        description: preset.description,
         affected_skus: preset.affected_skus,
+        affected_routes: preset.affected_routes,
         severity: preset.severity,
         duration_days: preset.duration_days,
       });
@@ -222,6 +230,7 @@ export default function SimulatorPage() {
     disruption_type: "supply_shortage" as string,
     title: "",
     affected_skus: "",
+    affected_routes: "",
     severity: "medium" as string,
     duration_days: 14,
   });
@@ -238,11 +247,15 @@ export default function SimulatorPage() {
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean),
+        affected_routes: customForm.affected_routes
+          .split(",")
+          .map((s) => s.trim().toUpperCase())
+          .filter(Boolean),
         severity: customForm.severity,
         duration_days: customForm.duration_days,
       });
       setInjectResult(`Injected: ${customForm.title}`);
-      setCustomForm({ ...customForm, title: "", affected_skus: "" });
+      setCustomForm({ ...customForm, title: "", affected_skus: "", affected_routes: "" });
       setShowCustomPanel(false);
       setTimeout(() => setInjectResult(null), 4000);
     } catch (err) {
@@ -484,6 +497,9 @@ export default function SimulatorPage() {
         </Card>
       </div>
 
+      {/* Change an assumption / correct a record — the plan recomputes everywhere */}
+      <PlannerControls />
+
       {/* Black Swan Injection Panel */}
       <Card delay={0.3}>
         <div className="flex items-center justify-between mb-4">
@@ -592,6 +608,7 @@ export default function SimulatorPage() {
                     >
                       <option value="supply_shortage">Supply Shortage</option>
                       <option value="shipping_delay">Shipping Delay</option>
+                      <option value="demand_surge">Demand Surge (supplied signal)</option>
                     </select>
                   </div>
                   <div>
@@ -604,6 +621,7 @@ export default function SimulatorPage() {
                       <option value="low">Low</option>
                       <option value="medium">Medium</option>
                       <option value="high">High</option>
+                      <option value="critical">Critical (routes: blocked)</option>
                     </select>
                   </div>
                 </div>
@@ -627,7 +645,20 @@ export default function SimulatorPage() {
                     type="text"
                     value={customForm.affected_skus}
                     onChange={(e) => setCustomForm({ ...customForm, affected_skus: e.target.value })}
-                    placeholder="CHG-UC-001, EB-WS-002"
+                    placeholder="CHG-UC-001, EAR-002"
+                    className="w-full bg-buddy-bg border border-buddy-border rounded-lg px-3 py-2 text-sm text-buddy-text"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs text-buddy-muted block mb-1">
+                    Affected routes (optional, e.g. DXB-AUH, AUH-DXB)
+                  </label>
+                  <input
+                    type="text"
+                    value={customForm.affected_routes}
+                    onChange={(e) => setCustomForm({ ...customForm, affected_routes: e.target.value })}
+                    placeholder="DXB-AUH, AUH-DXB"
                     className="w-full bg-buddy-bg border border-buddy-border rounded-lg px-3 py-2 text-sm text-buddy-text"
                   />
                 </div>

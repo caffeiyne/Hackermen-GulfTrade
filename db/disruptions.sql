@@ -43,8 +43,8 @@ INSERT INTO events.disruptions (disruption_type, title, description, affected_sk
 VALUES (
     'shipping_delay',
     'Logistics Disruption — DXB-SHJ Route Delay',
-    'A logistics alert indicates that road construction and customs processing changes are causing delays on the Dubai-Sharjah transfer corridor. Shipments on this route may experience 2-3 additional days of transit time. Routes between Dubai-Abu Dhabi and Abu Dhabi-Sharjah are NOT affected. Inbound supplier shipments arriving via the Sharjah port may also be delayed.',
-    ARRAY['CHG-UC-001', 'CHG-UC-004', 'CAB-LT-001'],  -- SKUs with inbound via SHJ port or transfers on this route
+    'A logistics alert indicates that road construction and customs processing changes are causing delays on the Dubai-Sharjah transfer corridor. Shipments on this route may experience 2-3 additional days of transit time. Routes between Dubai-Abu Dhabi and Abu Dhabi-Sharjah are NOT affected. ',
+    ARRAY[]::text[],                                   -- route signal only: no SKU is asserted to be affected
     ARRAY['DXB-SHJ', 'SHJ-DXB'],                       -- only the DXB-SHJ corridor
     '2024-11-10',
     '2024-11-25',
