@@ -1,193 +1,115 @@
 # Answer Key for Judges — GulfTrade Intelligence
 
-> This document helps judges verify that the prototype demonstrates the correct behaviour for each test case in the case study. Use this alongside the live demo.
+> Expected behaviour for each test case, checked against the engine at the scenario start date (2024-10-27) after **Reset Demo Data**. API equivalents are given so results can be verified without the UI.
 
 ---
 
-## Test Case 1: Normal Planning Journey (Scenario A)
+## Test 1 — Normal planning journey (Scenario A)
 
-### What should happen
-
-| Step | Expected Behaviour | How to Verify |
+| Step | Expected | Where |
 |---|---|---|
-| Start Scenario A | Sim clock advances, sales generated, inventory depletes | Overview page — KPIs update in real time |
-| Agent observes | Agent panel shows "Observing..." then reasoning | Overview page — Agent Panel |
-| Forecast generated | 30-day demand per SKU/warehouse with confidence bands | Forecast page — check P10/P90 and confidence level |
-| Imbalance detected | Shortage flagged for AUH (USB-C chargers) | Imbalances page — look for "shortage" flag |
-| Excess detected | Excess flagged for DXB (same SKU) | Imbalances page — look for "excess" flag |
-| Transfer recommended | DXB → AUH transfer proposed with net benefit > 0 | Actions page — should show as #1 ranked, "Feasible" |
-| Constraints checked | Safety stock, lead time, route cost, source availability | Actions page — "Constraints Checked" section |
-| Human approval required | Approve button enabled, transfer doesn't execute until clicked | Actions page — click "Approve & Execute" |
-| Stock moves | DXB available decreases, AUH available increases | Overview or Warehouse Stock page |
+| Forecast | CHG-UC-001 @ AUH ≈ **292** units / 30d, P10–P90 ≈ 241–343, confidence *medium*, note "18 stockout days excluded"; raw average ≈ 268 | Forecast page · `/api/recommendations/forecasts` |
+| Shortage | AUH short of safety stock **after** counting the 200-unit inbound PO | Imbalances page |
+| Recommendation | **DXB→AUH, 62 units**, transfer cost 93 AED, net ≈ +393 AED, P10 net ≈ +98 AED | Actions page |
+| Not recommended | **SHJ→AUH** for the same SKU — "gap already covered by a cheaper/faster source" | Actions page |
+| Approval | Nothing moves until Approve; approval re-checks the live plan | Actions → Approve |
 
-### Correct answer
-
-The agent should recommend transferring USB-C chargers from **Dubai (DXB)** to **Abu Dhabi (AUH)** because:
-- DXB has excess stock above forecast + safety
-- AUH has projected stock below safety
-- Route DXB→AUH costs 1.50 AED/unit, 1-day lead time
-- Net benefit is positive (lost sale cost avoided > transfer cost + holding cost delta)
+**Why not 300 units?** The case example says "Abu Dhabi 100 vs 350". The agent counts reserved stock (20) and the in-transit PO (200), so the real gap is the safety buffer, not 250 units. Moving more would add transport cost for little expected benefit.
 
 ---
 
-## Test Case 2: Difficult Case (Scenario B)
+## Test 2 — Difficult case (Scenario B)
 
-### What should happen
-
-| Step | Expected Behaviour | How to Verify |
+| Day | Event | Expected |
 |---|---|---|
-| Start Scenario B | Same initial imbalance as Scenario A | Overview page |
-| Day 9: Semiconductor disruption fires | Supply constraint for CHG-UC-002 and CHG-UC-003 only | Timeline page — look for disruption event |
-| Agent does NOT assume all products affected | Only CHG-UC-002 and CHG-UC-003 forecasts adjusted | Forecast page — confidence drops to "low" for affected SKUs only. Other SKUs (CHG-UC-001, CHG-UC-004) remain unaffected |
-| Day 14: DXB-SHJ route disruption fires | Shipping delay on DXB-SHJ corridor | Timeline page — look for route disruption event |
-| Agent reassesses | Agent panel shows "Thinking..." then updated reasoning | Overview page — Agent Panel |
-| DXB→SHJ transfer rejected | Route disrupted badge shown, transfer marked "Not Recommended" or not generated | Actions page — look for "Route Disrupted" badge |
-
-### Correct answers
-
-**Semiconductor disruption (Day 9):**
-- **Affected SKUs**: CHG-UC-003 (GaN 65W), CHG-UC-002 (30W) — these use GaN components
-- **NOT affected**: CHG-UC-001 (20W basic), CHG-UC-004 (car charger), all cables, power banks, earbuds, mice
-- The agent must NOT recommend transferring more stock of unaffected SKUs based on this disruption
-- Forecast confidence for affected SKUs drops to "low"
-
-**DXB-SHJ route disruption (Day 14):**
-- **Affected route**: DXB→SHJ and SHJ→DXB only
-- **NOT affected**: DXB→AUH, AUH→DXB, AUH→SHJ, SHJ→AUH
-- Any transfer recommendation using the DXB-SHJ route should show "Route Disrupted" badge
-- Lead time increases by ~3 days (extra_days added in recommender)
+| 9 | GaN semiconductor constraint | Confidence → *low* for **CHG-UC-002 and CHG-UC-003 only**; their POs shown as "+14d (assumption)". CHG-UC-001/004, cables, power banks, earbuds and mice unchanged. |
+| 14 | DXB–SHJ route delay | Only DXB↔SHJ options get +3 days lead time and a **Route Disrupted** badge. They stay recommended only if still worth it. DXB↔AUH and AUH↔SHJ are untouched. No SKU is flagged by this event. |
+| any | Agent panel | Reasoning names the disruption, lists affected SKUs/routes, and states the rest are unaffected |
 
 ---
 
-## Test Case 3: Economically Unattractive Transfer
+## Test 3 — Economically unattractive transfer
 
-### What should happen
+AUH↔SHJ costs **3.20 AED/unit, 2 days** (vs 0.80–1.50). At the start date the list contains several **Not Recommended** options on this route, each with a reason, e.g.:
 
-| Step | Expected Behaviour | How to Verify |
-|---|---|---|
-| AUH has shortage, SHJ has excess (or vice versa) | Transfer evaluated | Actions page |
-| AUH→SHJ route costs 3.20 AED/unit, 2-day lead time | Cost is highest of all routes | Transfer matrix: AUH→SHJ = 3.20/unit vs DXB→AUH = 1.50/unit |
-| Net benefit is negative | Transfer marked "Not Recommended" | Actions page — red badge, "Not Recommended" |
-| Agent explains why | Reasoning shows cost exceeds benefit | Actions page — "Reasoning" section |
+- CHG-UC-001 SHJ→AUH — *gap already covered by a cheaper/faster source*
+- CAB-LT-002 SHJ→AUH — *transfer cost 3.20 AED/unit over 2d exceeds expected benefit*
 
-### Correct answer
-
-The **AUH→SHJ** route is deliberately expensive (3.20 AED/unit, 2-day lead time vs. 0.80-1.50 for other routes). If a transfer using this route is evaluated, the transfer cost should exceed the expected benefit (lost margin avoided + holding saved), resulting in:
-- `net_benefit < 0`
-- `is_feasible = false`
-- Badge: "Not Recommended"
-- Still shown in the list (transparent — Sara can see what was considered and rejected)
+Moves under 25 AED expected net are also shown as Not Recommended ("not worth the handling effort").
 
 ---
 
-## Test Case 4: Misleading Sales History
+## Test 4 — Misleading sales history
 
-### What should happen
-
-| Step | Expected Behaviour | How to Verify |
-|---|---|---|
-| A SKU has stockout periods in its 90-day history | Sales were 0 during stockout (suppressed demand) | Sales data — `is_stockout = true` flags |
-| Forecaster corrects for stockouts | Stockout days replaced with non-stockout average | Forecast page — check `data_quality_notes` mentions "stockout days corrected" |
-| Confidence reduced | Confidence level drops from "high" to "medium" | Forecast page — confidence level column |
-| Imbalance detector flags it | "Misleading Sales" flag appears | Imbalances page — look for `flag_type: misleading_sales` |
-
-### Correct answer
-
-Any SKU/warehouse with stockout periods in its sales history should:
-- Have forecast confidence reduced to "medium" (not "high")
-- Show a data quality note: "X stockout days corrected in demand estimation"
-- Appear on the Imbalances page with a "misleading_sales" flag
-- The corrected forecast should be higher than the naive average (because suppressed demand was un-corrected)
-
----
-
-## Test Case 5: Ageing Stock
-
-### What should happen
-
-| Step | Expected Behaviour | How to Verify |
-|---|---|---|
-| Some SKUs have stock in the 61-90 or 90+ age buckets | Stock age data exists | Warehouse Stock page or Imbalances page |
-| Ageing flag fires if >25% of stock is 61+ days old | "Ageing" flag with severity | Imbalances page — look for `flag_type: ageing` |
-| Recommended action: prioritize selling or transferring | Flag description includes recommendation | Imbalances page — "Recommended Action" field |
-
----
-
-## Test Case 6: Baseline Comparison
-
-### What should happen
-
-| Step | Expected Behaviour | How to Verify |
-|---|---|---|
-| Actions page loads | "Baseline vs. AI Solution" card appears at top | Actions page |
-| Baseline shows full shortage exposure | All projected shortfalls × lost margin | Shortage exposure should be highest in baseline |
-| AI solution shows reduced shortage | Shortage reduced by feasible transfers | Shortage exposure should be lower than baseline |
-| Net benefit shown | Difference between baseline and AI net position | Should be positive if any feasible recommendations exist |
-| Service level comparison | Baseline vs. AI service level % | AI should be higher |
-
-### Correct answer
-
-The baseline (do nothing) should show:
-- Higher shortage exposure (AED)
-- Zero transfer cost
-- Negative net position (all shortage losses accepted)
-- Lower service level
-
-The AI solution should show:
-- Lower shortage exposure (reduced by transfers)
-- Non-zero transfer cost (but less than shortage reduction)
-- Positive or less-negative net position
-- Higher service level
-
----
-
-## Test Case 7: Black Swan Injection
-
-### What should happen
-
-| Step | Expected Behaviour | How to Verify |
-|---|---|---|
-| Inject Port Strike | All Dubai inbound delayed | Simulator page — Black Swan panel |
-| Agent reacts immediately | Agent panel shows "Thinking..." | Overview page — within 1-2 seconds |
-| Recommendations updated | New constraints appear, routes may be disrupted | Actions page — check for updated badges |
-| Emergency alert fires | Toast notification appears once (not multiple) | Top of screen — single toast |
-
-### Available black swan events
-
-| Event | What It Does |
+| SKU @ location | Expected |
 |---|---|
-| Port Strike | Delays all DXB inbound shipments |
-| Chip Shortage | Supply cut for specific charger SKUs (GaN-based) |
-| Warehouse Fire | Destroys stock at a specific warehouse |
-| Demand Spike | Viral surge on a specific product type |
-| Flash Flood | Blocks a specific transfer route |
-| Custom | User-defined disruption with SKU/route/severity/duration |
+| CHG-UC-001 @ AUH | "18 stockout days excluded (censored demand)", "raw recent average would understate demand by ~8%", *misleading_sales* flag |
+| Backtest | On stockout-hit series the agent's error is **1.6%** vs **43.9%** for the raw recent average (`/api/recommendations/backtest`) |
 
 ---
 
-## Test Case 8: Cancel Transfer
+## Test 5 — Ageing stock
 
-### What should happen
+CHG-UC-001 @ DXB has 150 of 500 tracked units aged 61+ days → *ageing* flag with the tied-up value at cost. Dubai is also a transfer **source** for this SKU, so the recommended move reduces surplus there.
 
-| Step | Expected Behaviour | How to Verify |
+---
+
+## Test 6 — Baseline vs plan (start date, all 12 recommendations approved)
+
+| Metric | Baseline | Plan |
 |---|---|---|
-| Approve a transfer | Stock moves, "Transfer Executed" card shows | Actions page |
-| Click "Cancel Transfer" | Confirmation dialog appears | Actions page |
-| Confirm cancellation | Stock reverses (returns to source), "Transfer Cancelled" badge | Actions page + Overview/Stock page |
-| Action Summary shows cancelled | Yellow badge with reverse icon | Action Log page |
+| Expected lost sales | 9,321 AED | 5,425 AED |
+| Expected units short | 556 | 308 |
+| Surplus holding (30d) | 3,324 AED | 1,987 AED |
+| Transfer cost | 0 | 901 AED |
+| Total expected cost | 12,644 AED | 8,313 AED |
+| Fill rate | 89.1% | 93.9% |
+
+Net **+4,331 AED**, which equals the sum of the per-transfer net benefits. Both columns use the same model, described under the card.
 
 ---
 
-## Scoring Guide (for judges)
+## Test 7 — Black swans (Simulator page)
 
-| Judging Criterion | Weight | What to Look For |
+| Button | Expected |
+|---|---|
+| Road Closure | DXB↔AUH blocked → DXB→AUH options *Not Recommended — route blocked*; re-routing via SHJ only where it still pays |
+| Chip Shortage | GaN POs +14d; confidence low for CHG-UC-002/003 only |
+| Port Strike | Charger POs held until the strike ends; transfers unaffected |
+| Demand Spike | EAR-001/002 forecasts rise for the overlapping days, labelled "supplied signal … assumption" |
+| Supplier Recall | Power bank POs +21d; Replenishment advice card lists remaining gaps |
+| Flash Flood | DXB↔SHJ +7 days |
+
+---
+
+## Test 8 — Change once, see it everywhere
+
+Simulator → **Planner controls**:
+- *Mark as not happening* on the GaN disruption → confidence for CHG-UC-002/003 returns to normal; plan and impact recompute
+- *Correct a stock record* (e.g. CHG-UC-001 @ AUH available → 20) → shortage, recommendation and impact recompute
+
+Both write `assumption_changed` / `record_corrected` audit entries with before/after values (Timeline page).
+
+---
+
+## Test 9 — Approve, reject, cancel
+
+- Approve works for **any** recommended card (not just the top 3) and uses the current quantity and cost
+- Approving a stale or not-recommended option returns a clear 409 message instead of moving stock
+- Cancel Transfer reverses the stock movement
+
+---
+
+## Scoring guide
+
+| Criterion | Weight | Where to look |
 |---|---|---|
-| Business relevance and value | 30% | Quantified AED impact, baseline comparison, shortage reduction |
-| AI quality and evidence | 25% | Confidence levels, data quality notes, constraint checks, disruption-aware reasoning |
-| Working prototype | 20% | End-to-end flow works: sim → forecast → detect → recommend → approve → execute |
-| Seller/planner experience | 15% | Plain-English reasoning, approve/reject/cancel, mobile responsive |
-| Responsible design | 10% | Human approval required, SKU-specific disruptions, uncertainty labelled |
+| Business value | 30% | Baseline vs plan card; per-transfer net and P10 downside |
+| AI quality and evidence | 25% | Backtest card; P10–P90; censoring notes; Not Recommended reasons; SKU-scoped disruptions |
+| Working prototype | 20% | Scenario A → B, black swans, approve/cancel, planner controls |
+| Planner experience | 15% | Plain-English agent panel; one-click approve; corrections; mobile layout |
+| Responsible design and scale | 10% | Approval gate, audit log, labelled assumptions; SUPPORTING_NOTE §5–7 |
 
 ---
 
-*GulfTrade Intelligence — Tradeling Hackathon | Answer Key for Judges*
+*GulfTrade Intelligence — Answer Key*

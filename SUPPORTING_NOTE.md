@@ -1,192 +1,153 @@
 # Supporting Note — GulfTrade Intelligence
 
-> Submitted as part of the Tradeling Hackathon deliverables per Section 6 of the case study: "A short supporting note covering the business problem, datasets, method, test results, limitations and requirements for a real-world pilot."
+> Tradeling Hackathon deliverable (case study §6): business problem, datasets, method, test results, limitations and requirements for a real-world pilot. Every number below is reproducible from the repo: run the setup, then `GET /api/recommendations/full-analysis` and `GET /api/recommendations/backtest` at the scenario start date (2024-10-27).
 
 ---
 
-## 1. Business Problem
+## 1. Business problem
 
-**Sara**, the inventory planner at GulfTrade Supplies (a fictional UAE-based B2B seller of mobile accessories), manages ~5,000 units across three warehouses in Dubai (DXB), Abu Dhabi (AUH), and Sharjah (SHJ). She uses spreadsheets to track 20 SKUs across 5 product types (chargers, cables, power banks, earbuds, mice).
+**Sara**, inventory planner at GulfTrade Supplies (fictional UAE B2B seller of mobile accessories), manages ~5,000 units of 20 SKUs (5 product types) across Dubai (DXB), Abu Dhabi (AUH) and Sharjah (SHJ), using spreadsheets.
 
-The core problems:
+- **Stock in the wrong place** — Dubai holds surplus chargers while Abu Dhabi runs short
+- **Misleading history** — stockouts suppress recorded sales, so a plain average under-forecasts
+- **Ageing and surplus** — old stock ties up cash and holding cost
+- **Disruptions** — supply and route problems hit *specific* SKUs and routes, not everything
+- **No quantified trade-offs** — no way to compare "move stock" against "do nothing" in AED
 
-- **Stock imbalance** — excess stock accumulates in one location while another runs short
-- **Misleading sales history** — stockouts suppress observed demand, making forecasts unreliable
-- **Ageing inventory** — old stock ties up working capital and risks obsolescence
-- **Disruption blindness** — supply shortages and shipping delays aren't factored into planning decisions
-- **No quantified trade-offs** — Sara can't compare the cost of transferring stock vs. the cost of doing nothing
-
-Our AI agent solves these by autonomously observing inventory state, forecasting demand with data-quality corrections, detecting imbalances, and recommending cost-effective transfers — all subject to human approval.
+GulfTrade Intelligence forecasts demand with honest uncertainty, flags imbalances, and recommends only transfers that pay off after cost — every action waits for Sara's approval.
 
 ---
 
-## 2. Datasets
-
-All data is **synthetic and fictional**, generated specifically for this hackathon.
+## 2. Datasets (all synthetic)
 
 | Dataset | Description |
 |---|---|
-| **SKU Master** | 20 SKUs across 5 product types with unit cost, unit price, shelf life, supplier lead times |
-| **Warehouses** | 3 UAE locations (DXB, AUH, SHJ) with coordinates and capacity |
-| **Sales History** | 90 days of daily transactions per SKU/warehouse, with embedded stockout periods and missing data gaps |
-| **Inventory** | Available, reserved, safety stock, and inbound quantities per SKU/warehouse |
-| **Stock Age** | Age distribution in buckets (0-30, 31-60, 61-90, 90+ days) |
-| **Transfer Matrix** | 6 inter-warehouse routes with cost/unit (AED) and lead time (days). Includes one deliberately unattractive route (AUH→SHJ at 3.20 AED/unit, 2 days) |
-| **Holding Costs** | Daily holding cost per SKU/warehouse (~0.5% of unit cost) |
-| **Inbound Orders** | Purchase orders with expected/revised delivery dates |
-| **Disruption Signals** | 2 labelled scenarios: semiconductor supply shortage (affects specific GaN charger SKUs) + DXB-SHJ shipping delay (affects specific route only) |
+| SKU master | 20 SKUs, 5 product types, unit cost/price, shelf life, supplier lead time |
+| Warehouses | DXB, AUH, SHJ |
+| Sales history | 90 days daily, with **stockout periods** (e.g. CHG-UC-001 @ AUH, 18 days) and **unrecorded days** |
+| Inventory | Available, reserved, safety stock, inbound per SKU/location, with `updated_at` timestamps |
+| Stock age | Buckets 0-30 / 31-60 / 61-90 / 90+ |
+| Transfer matrix | 6 routes. DXB↔AUH 1.50 AED/unit 1d, DXB↔SHJ 0.80 1d, **AUH↔SHJ 3.20 2d (deliberately unattractive)** |
+| Holding costs | Daily per SKU/location |
+| Inbound POs | Expected / revised dates, status (received on arrival in the sim) |
+| Disruption signals | Two labelled, dated scenarios: GaN semiconductor shortage (CHG-UC-002/003 only) and DXB–SHJ route delay (that corridor only) |
 
 ---
 
 ## 3. Method
 
-### 3.1 Demand Forecasting
+### 3.1 One planning snapshot
+`app/ai/planning.py` builds a single view — stock, disruption-adjusted inbound ETAs, route status, supplied demand signals — that the forecaster, detector and recommender all share. A corrected record or changed assumption therefore flows through forecast → imbalances → recommendations → impact in one pass. Disruption effects are narrow and labelled: a disruption only touches the SKUs/routes it lists.
 
-- **Algorithm**: Weighted Moving Average (WMA) over 90 days, split into 5 buckets with weights [0.35, 0.25, 0.20, 0.12, 0.08] (recent → old)
-- **Trend adjustment**: Linear trend from first-half vs. second-half mean, dampened by 50%
-- **Stockout correction**: During stockout days, observed sales are suppressed. We replace stockout-day values with the non-stockout daily average for the same SKU, un-suppressing true demand
-- **Missing data correction**: If >15% of non-stockout days are zero, we partially fill with 50% of the positive-day average (labelled as uncertain)
-- **Confidence bands**: P10/P90 calculated from historical standard deviation, scaled by √30 for the 30-day horizon
-- **Confidence levels**: High / Medium / Low — reduced when stockout corrections are applied, missing data is detected, historical variance is high, or active disruptions affect the SKU
-- **Disruption integration**: Active supply disruptions reduce confidence and add data quality notes
+### 3.2 Forecast (chosen by backtest)
+- Exponentially weighted mean of daily sales, half-life 30 days, 90-day window
+- **Stockout days are censored** (excluded), not treated as zero demand; the size of the distortion is reported ("raw recent average would understate demand by X%")
+- Unrecorded days counted and surfaced as a data-quality note
+- Calibrated **P10–P90** band (daily noise + level uncertainty + 5% model error)
+- Confidence from band width and data quality; supply disruptions lower confidence only for listed SKUs
+- Supplied demand signals (`demand_surge`) scale only listed SKUs for the overlapping days, labelled as an assumption
 
-### 3.2 Imbalance Detection
-
-Four flag types per SKU/warehouse:
-
-| Flag | Trigger |
+### 3.3 Imbalances
+| Flag | Rule |
 |---|---|
-| **Shortage** | Projected stock (available - reserved + inbound - forecast) < safety stock |
-| **Excess** | Available stock > forecast + safety + 50% buffer |
-| **Ageing** | >25% of age-tracked stock is 61+ days old, or >50 units aged 61+ at >15% ratio |
-| **Misleading Sales** | Stockout periods detected in sales history — forecast corrected but confidence reduced |
+| Shortage | usable stock (available − reserved + inbound landing in horizon) − P50 forecast < safety stock |
+| Excess | usable stock > **P90** forecast + safety (cautious: only stock beyond a high-demand month) |
+| Ageing | > 25% of age-tracked stock 61+ days old (or > 50 units at > 15%) |
+| Misleading sales | stockout days in history — corrected forecast shown next to the raw average |
 
-### 3.3 Recommendation Engine
+### 3.4 Recommendations (expected value, not point forecasts)
+Lost sales at a location = margin × E[max(demand − stock, 0)] with demand ~ forecast distribution. Per SKU, units are allocated in batches along the source→destination pair with the highest marginal net benefit:
 
-For each shortage, the recommender searches for excess stock of the **same SKU** at other warehouses and evaluates:
+> lost sales avoided at destination (only demand **after arrival** counts) − lost sales created at source + change in surplus holding cost − transfer cost
 
-1. **Route exists** — transfer matrix lookup
-2. **Route not disrupted** — active disruption check (adds delay days if route is affected)
-3. **Source has spare stock** — available - reserved - safety - forecast > 0
-4. **Transfer quantity** — min(shortfall, excess, source_spare)
-5. **Cost-benefit**:
-   - Transfer cost = qty × cost_per_unit
-   - Expected benefit = (lost sale cost avoided) + (holding cost saved at source) - (holding cost increase at destination)
-   - Net benefit = expected benefit - transfer cost
-6. **Feasibility** — net benefit > 0 AND lead time ≤ 30 days
+Hard constraints: only on-hand stock moves; the source keeps at least its own P50 forecast + safety stock; blocked routes are excluded; disrupted routes carry extra lead time. Each gap is filled once, by the cheapest adequate source. Options evaluated but not chosen are shown as **Not Recommended** with the reason. Moves under 25 AED net are not recommended. Each recommendation also shows its net benefit **if demand lands at P10**. Where transfers can't close a gap, a **replenishment** advisory is raised (purchasing stays with Sara).
 
-Recommendations ranked by net benefit (descending). Unattractive transfers (net benefit < 0) are shown but marked "Not Recommended."
+### 3.5 Baseline comparison
+Baseline = recent average demand view with **no proactive transfers**. Baseline and plan are scored with the same model (expected lost margin + 30-day holding on surplus + transfer cost), so before/after numbers are in the same units.
 
-### 3.4 Baseline Comparison
-
-The case study requires comparison against a simple baseline. We compute:
-
-| Metric | Baseline (Do Nothing) | AI Solution |
-|---|---|---|
-| Shortage exposure | All projected shortfalls × lost margin | Reduced by feasible transfers |
-| Transfer cost | 0 AED | Sum of transfer costs |
-| Net position | -(shortage exposure) | Net benefit (benefit - transfer cost) |
-| Service level | Units at risk / total demand | Improved by transfers |
-
-### 3.5 Agent Architecture
-
-The agent is **not a pipeline** — it's an autonomous reasoning loop:
-
-1. **Observe** — reads inventory state, sales, disruptions from the database
-2. **Reason** — runs forecaster → imbalance detector → recommender as tools, building a reasoning chain
-3. **Plan** — evaluates transfer options, checks constraints, ranks by net benefit
-4. **Explain** — generates plain-English reasoning pushed to the dashboard via WebSocket
-5. **Act** — auto-creates transfer proposals (still require Sara's approval)
-
-The agent re-evaluates within 1 second when a black swan event is injected.
+### 3.6 Agent loop
+Event-driven: runs on a timer and immediately on disruption, approval, record correction or assumption change. It loads one snapshot, runs forecast → detect → recommend, explains in plain English (including what it decided *not* to do), and creates proposals for the top 3. Nothing executes without Sara's approval; approval re-derives the current recommendation and refuses if it is stale or not recommended.
 
 ---
 
-## 4. Test Results
+## 4. Test results (scenario start, 2024-10-27)
 
-### Scenario A — Normal Planning Journey
+### 4.1 Forecast accuracy — 30-day holdout (`GET /api/recommendations/backtest`)
+Trained 2024-07-29 → 09-26, scored 09-27 → 10-26, 60 SKU × location series.
 
-- USB-C charger imbalance detected: Dubai excess, Abu Dhabi shortage
-- Transfer recommended: DXB → AUH (cost 1.50/unit, 1 day lead time)
-- Net benefit positive — feasible and economical
+| | Agent forecast | Baseline (recent 30-day average) |
+|---|---|---|
+| Error (WAPE), all series | **9.0%** | 12.5% |
+| Bias | −1.1% | −2.3% |
+| Error, stockout-hit series (2) | **1.6%** | 43.9% (under-forecast) |
+| P10–P90 coverage | **83%** (target 80%) | — |
 
-### Scenario B — Difficult Case
+### 4.2 Normal journey — Scenario A
+USB-C charger CHG-UC-001: AUH forecast **292** (P10–P90 241–343) after correcting 18 stockout days; the raw average would say 268. With the 200-unit inbound PO counted, AUH is short of its safety buffer, so the agent recommends **DXB→AUH 62 units** (93 AED, net +393 AED; +98 AED even at P10). It does **not** recommend 300 units: the inbound PO already covers most of the gap.
 
-Two disruptions fire during the 30-day window:
+The deliberately expensive route is rejected: **SHJ→AUH — "gap already covered by a cheaper/faster source; 198 AED for ~131 AED benefit."**
 
-1. **Day 9**: Semiconductor supply constraint (CHG-UC-002, CHG-UC-003 only — NOT all chargers)
-2. **Day 14**: DXB-SHJ shipping route delay
+### 4.3 Baseline vs plan (whole portfolio, if Sara approves all 12 recommendations)
 
-Agent behaviour verified:
-- Does NOT assume all products are affected by the semiconductor shortage (only GaN-based chargers CHG-UC-002/003)
-- Rejects DXB→SHJ transfer when route is disrupted (adds delay, may arrive too late)
-- AUH→SHJ transfer marked "Not Recommended" (cost 3.20/unit exceeds benefit — the deliberately unattractive transfer)
-- Reassesses recommendations after each disruption fires
+| Metric | Baseline (do nothing) | Agent plan |
+|---|---|---|
+| Expected lost sales (margin) | 9,321 AED | **5,425 AED** (−42%) |
+| Expected units short | 556 | **308** |
+| Holding cost on surplus, 30d | 3,324 AED | 1,987 AED |
+| Transfer cost | 0 | 901 AED |
+| Total expected cost | 12,644 AED | **8,313 AED** |
+| Expected fill rate | 89.1% | **93.9%** |
 
-### Baseline Comparison (illustrative)
+Net expected benefit **+4,331 AED / 30 days** for 901 AED of transport. 12 options are listed as Not Recommended with reasons.
 
-| | Baseline | AI Solution | Improvement |
-|---|---|---|---|
-| Shortage exposure | ~X AED | ~Y AED | ↓ Z% |
-| Net position | -(X) AED | +W AED | +W+X AED |
-| Service level | ~85% | ~95% | +10% |
-
-*(Exact values depend on sim state at time of demo — visible on the Actions page)*
+### 4.4 Difficult cases — Scenario B and black swans
+- **Day 9, GaN shortage:** confidence drops to *low* for CHG-UC-002/003 **only**; their inbound POs are assumed +14 days late (labelled). CHG-UC-001/004 and all other SKUs are unchanged.
+- **Day 14, DXB–SHJ delay:** only DXB↔SHJ transfers get +3 days and a "Route Disrupted" badge; they remain only where still worth it. DXB↔AUH and AUH↔SHJ are untouched.
+- **Road Closure (critical, DXB↔AUH):** all DXB→AUH options become *Not Recommended — route blocked*; the agent re-routes CHG-UC-002 via SHJ (47 units at 3.20 AED/unit, still positive) and drops moves that no longer pay.
+- **Change an assumption once** (Planner controls → "Mark as not happening") or **correct a record** (e.g. CHG-UC-001 AUH available → 20): forecast, flags, recommendations and impact recompute; before/after values go to the audit log.
 
 ---
 
 ## 5. Limitations
 
-1. **Forecasting method** — WMA with trend adjustment is more sophisticated than simple average but is not a full time-series model (ARIMA, Prophet, or LSTM would improve accuracy). Chosen for interpretability and hackathon time constraints.
-
-2. **Single-echelon** — We model only the seller's 3 warehouses. Real multi-echelon optimization (MEIO) would consider the full supply chain from supplier → DC → warehouse → customer.
-
-3. **Deterministic transfer execution** — Approved transfers execute immediately. In reality, transfers have their own lead times, can fail, and may need rescheduling.
-
-4. **No automated reorder** — The agent recommends transfers between warehouses but does not auto-generate purchase orders to suppliers. This is a planned extension.
-
-5. **Synthetic data** — Sales patterns are generated programmatically. Real sales data would include more complex seasonality, promotions, and buyer-specific patterns.
-
-6. **No multi-objective optimization** — Recommendations are ranked by net economic benefit only. A production system might also weight service level, risk tolerance, and strategic priorities.
+1. **Forecast model** — a transparent weighted average with censoring; no promotions, Ramadan/Eid or B2B order-lumpiness yet. Beats the baseline on synthetic data; must be re-validated on real data.
+2. **Normal demand assumption** — fine for these volumes; low-volume SKUs would need a Poisson / negative-binomial model.
+3. **Execution** — approved transfers move stock immediately in the prototype; real transfers have lead times and can fail.
+4. **Replenishment** — advisory only (suggested quantity + supplier lead time); no PO creation.
+5. **Disruption effects** — delay days by severity are fixed assumptions (shown on screen); a pilot would source them from supplier/3PL feeds.
+6. **Single echelon, greedy allocation per SKU** — fine for 3 locations; a network optimiser is needed at scale.
+7. **No authentication** — `approved_by` is supplied by the client. RBAC is a pilot requirement.
+8. **Synthetic data** throughout.
 
 ---
 
-## 6. Requirements for a Real-World Pilot
+## 6. Requirements for a real-world pilot
 
-| Requirement | Current State | Pilot Needs |
+| Area | Prototype | Pilot needs |
 |---|---|---|
-| **Data integration** | Mock data in PostgreSQL | ERP/WMS API integration (SAP, Oracle, Shopify) |
-| **Forecast model** | WMA with stockout correction | Upgrade to Prophet or LSTM, add seasonality + promotions |
-| **Transfer execution** | Immediate DB update | Integration with 3PL logistics APIs (Aramex, DHL) for actual shipment booking |
-| **Multi-warehouse** | 3 fixed locations | Support N warehouses with dynamic transfer graph |
-| **Approval workflow** | Single approver (Sara) | Multi-tier approval (planner → manager → finance) with SLA timers |
-| **Disruption sources** | Manual injection + seeded scenarios | Real-time RSS/API feeds (port authority, customs, supplier portals) |
-| **Alerting** | Dashboard + WebSocket toast | Email + SMS + Slack integration for critical shortages |
-| **Audit trail** | Database audit log | Immutable log with regulatory compliance (GS1, UAE trade regulations) |
-| **Security** | No auth (hackathon) | Role-based access control, API key management, audit logging |
-| **Scale** | 20 SKUs, 3 warehouses | 10,000+ SKUs, 50+ locations — requires batch processing + caching |
+| Data | Seeded Postgres | Seller ERP/WMS/marketplace feeds; data contracts; freshness SLAs (timestamps already tracked) |
+| Forecast | EWMA + censoring, backtested | Re-run backtest on 12+ months of real data; add seasonality (Ramadan, Eid, White Friday, back-to-school) and promotions; champion/challenger |
+| Optimisation | Greedy per SKU | Min-cost-flow / MILP across N locations, vehicle capacity, minimum lot sizes |
+| Execution | Immediate DB move | 3PL booking APIs, in-transit tracking, partial receipt |
+| Approval | Single approver | Seller-scoped RBAC, thresholds (auto-approve < X AED), multi-tier for large moves, full audit |
+| Multi-tenant | One seller | Tenant isolation per seller; Tradeling never sees another seller's data unaggregated |
+| Disruptions | Seeded + manual | Dated feeds (port authority, carriers, supplier notices) with source attribution; human confirmation before use |
+| Cost and scale | One Postgres + one API container; one planning pass reads each table once | Nightly batch forecasts + event-driven re-plans for touched SKUs only; compute and cost to be sized during the pilot |
 
-### Estimated pilot timeline: 8-12 weeks
-
-1. **Weeks 1-2**: Data pipeline from live ERP/WMS
-2. **Weeks 3-4**: Forecast model upgrade + validation against historical data
-3. **Weeks 5-6**: Transfer execution integration with 3PL
-4. **Weeks 7-8**: Approval workflow + alerting
-5. **Weeks 9-10**: UAT with real planners (shadow mode — recommend but don't execute)
-6. **Weeks 11-12**: Production deployment + monitoring
+**Pilot plan (8–12 weeks):** 1–2 data integration with one seller · 3–4 backtest on real history · 5–8 **shadow mode** (recommend, don't execute; compare to planner decisions) · 9–10 approval workflow + RBAC · 11–12 limited go-live on one product family.
 
 ---
 
-## 7. Trust Boundaries (Case Study Compliance)
+## 7. Trust boundaries (case-study compliance)
 
-| Rule | How We Comply |
+| Rule | How we comply |
 |---|---|
-| Must not invent demand signals | Forecasts use only historical sales + supplied disruptions |
-| Must not assert market event affects unrelated SKUs | Disruptions have explicit `affected_skus` arrays — only listed SKUs impacted |
-| Must not treat uncertain demand as guaranteed | Confidence levels (high/medium/low) + P10/P90 bands on every forecast |
-| Must not execute stock movements without human approval | All transfers require Sara's approval via API — agent only proposes |
-| Unsupported conclusions labelled as assumptions | Every forecast includes `assumptions` and `data_quality_notes` arrays |
+| Don't invent demand signals | Forecast uses recorded sales only; supplied `demand_surge` signals are applied only to listed SKUs and labelled as assumptions |
+| Don't apply an event to unrelated SKUs | Every disruption lists `affected_skus` / `affected_routes`; nothing else is touched (the route-delay seed lists no SKUs) |
+| Don't treat uncertain demand as guaranteed | P10–P90 on every forecast; benefits are expected values; P10 downside shown per transfer |
+| Don't execute without approval | Agent only proposes; approval re-checks the live plan and refuses stale or not-recommended actions |
+| Label unsupported conclusions | `assumptions` and `data_quality_notes` on every forecast; delay-day assumptions shown on every affected PO/route |
 
 ---
 
-*GulfTrade Intelligence — Tradeling Hackathon submission*
+*GulfTrade Intelligence — Team Hackermen, Tradeling Hackathon*

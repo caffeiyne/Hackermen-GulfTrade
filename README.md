@@ -74,7 +74,7 @@ They open it in any browser. The dashboard auto-connects to your backend — **A
 - Watch emergency alerts fire when you inject black swan events
 - Approve/reject transfer recommendations
 - **Cancel an approved transfer** — reverse a stock movement with one click if Sara changes her mind
-- **Reset demo data** — one-click button on the Simulator page to restore all stock levels and clear sim history
+- **Reset demo data** — one-click button on the Simulator page: restores stock levels, POs and the two labelled disruption scenarios, and clears sim-generated sales (the 90-day history is kept)
 - **Open on mobile/iPad** — the dashboard is fully responsive with a collapsible sidebar
 
 > **Tip:** Use the **Quick-Start Demo** button on the Simulator page — it starts Scenario B at 4x speed so disruptions fire within ~2 minutes.
@@ -256,17 +256,21 @@ See flagged issues:
 ### 6. Inject a Black Swan (the highlight)
 
 Go back to the **Simulator** page. Scroll to the **Black Swan Events** panel:
-- Click **Port Strike** — all Dubai inbound delayed
+- Click **Road Closure** — the DXB↔AUH highway is blocked for 5 days
 - Watch the agent panel (Overview) — it immediately shows **"Thinking..."**
-- Within seconds, the agent reassesses all recommendations with the new disruption factored in
-- Go to Actions — recommendations now show **"Route Disrupted"** badges and updated lead times
+- Go to Actions — DXB→AUH options now show **"Route Disrupted" / Not Recommended — route blocked**, and the agent
+  re-routes via Sharjah only where the 3.20 AED/unit cross-emirate cost still pays off
 
-Try other black swans:
-- **Chip Shortage** — GaN charger supply cut (affects specific SKUs only)
-- **Warehouse Fire** — Sharjah power bank stock destroyed
-- **Demand Spike** — viral social media surge on earbuds
-- **Flash Flood** — DXB-SHJ corridor impassable
+Try other black swans (each names exactly which SKUs/routes it touches — nothing else changes):
+- **Chip Shortage** — GaN charger POs (CHG-UC-002/003) slip +14 days; confidence drops for those SKUs only
+- **Port Strike** — inbound charger containers held until the strike ends; road transfers still run
+- **Demand Spike** — a *supplied* demand signal (x2 for 10 days) on two earbud SKUs, labelled as an assumption
+- **Supplier Recall** — power bank POs slip +21 days; watch the Replenishment advice card
+- **Flash Flood** — +7 days transit on DXB↔SHJ; transfers there stay only if still worth it
 - Or use **Custom** to inject your own disruption with any SKU/route/severity/duration
+
+Then use **Planner controls** on the same page to mark a disruption as "not happening", change its severity,
+or correct a stock record — the forecast, imbalances, actions and impact all recompute from that one change.
 
 ### 7. Try Scenario B (the difficult case)
 
@@ -429,6 +433,9 @@ tradling-logistics/
 | POST | `/api/simulator/reset` | Reset to initial state |
 | POST | `/api/simulator/reset-demo-data` | Full DB reset — truncate sim data + re-seed stock levels |
 | POST | `/api/simulator/inject` | Inject custom disruption (black swan) |
+| PATCH | `/api/disruptions/{id}` | Change a disruption assumption (active, severity, end date, SKUs, routes) — audit-logged |
+| PATCH | `/api/inventory/{sku}/{warehouse}` | Correct a stock record (available, reserved, safety, inbound) — audit-logged |
+| GET | `/api/recommendations/backtest` | Forecast error vs recent-average baseline on a 30-day holdout |
 | GET | `/api/simulator/timeline` | Event audit log |
 | GET | `/api/agent/analysis` | Agent's latest reasoning cycle (full output) |
 | GET | `/api/agent/status` | Is agent running + cycles completed |
