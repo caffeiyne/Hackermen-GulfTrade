@@ -1,0 +1,49 @@
+# Render Blueprint — GulfTrade Intelligence
+# Usage: Go to render.com → New → Blueprint → select this repo
+# Render will create all 3 services automatically. One click.
+
+services:
+
+  # ── PostgreSQL Database ──────────────────────────────────────────────
+  - type: psdb
+    name: gulftrade-db
+    ipAllowList:            # allow all — fine for hackathon
+      - source: 0.0.0.0/0
+        description: anywhere
+
+  # ── FastAPI Simulator Backend ────────────────────────────────────────
+  - type: web
+    name: gulftrade-simulator
+    env: docker
+    dockerfilePath: ./Dockerfile.simulator
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gulftrade-db
+          property: externalConnectionString
+      - key: RUN_SEED
+        value: "1"
+      - key: CORS_ORIGINS
+        value: '["https://gulftrade-dashboard.onrender.com"]'
+      - key: PYTHONUNBUFFERED
+        value: "1"
+
+  # ── Next.js Dashboard Frontend ───────────────────────────────────────
+  - type: web
+    name: gulftrade-dashboard
+    env: docker
+    dockerfilePath: ./Dockerfile.dashboard
+    dockerContext: .
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gulftrade-db
+          property: externalConnectionString
+      - key: NEXT_PUBLIC_API_URL
+        value: https://gulftrade-simulator.onrender.com
+      - key: NEXT_PUBLIC_WS_URL
+        value: wss://gulftrade-simulator.onrender.com/ws/live
