@@ -192,10 +192,6 @@ Go to the **Actions** page:
 ```
 tradling-logistics/
 ├── docker-compose.yml      # All services (DB + API + Dashboard + pgAdmin)
-├── Dockerfile.simulator    # Production Docker image for Render deployment
-├── Dockerfile.dashboard    # Production Docker image for Render deployment
-├── render.yaml             # Render Blueprint (one-click cloud deploy)
-├── startup.sh              # DB init + SSL script for Render deployment
 │
 ├── setup.py                # One-command setup wizard (DB + env files)
 ├── setup_db.py             # Database setup helper
@@ -249,8 +245,7 @@ tradling-logistics/
 │       └── simulator/      # Scenario controls + Black Swan + Reset Demo Data
 │
 ├── SUPPORTING_NOTE.md      # Business problem, method, results (deliverable #3)
-├── ANSWER_KEY.md           # Judge verification answer key
-└── QUICKSTART.md           # Quick reference guide
+└── ANSWER_KEY.md           # Judge verification answer key
 ```
 
 ## Real-Time Architecture
@@ -339,18 +334,6 @@ tradling-logistics/
 - **90 days** of sales history with embedded stockout periods + missing data
 - **2 disruption scenarios** (supply shortage + shipping delay)
 - **One deliberately unattractive transfer** (AUH→SHJ, cost exceeds benefit)
-
----
-
-## Cloud Deployment (Render)
-
-A `render.yaml` blueprint is included for one-click deployment to [Render](https://render.com):
-
-1. Go to **render.com → New → Blueprint**
-2. Select this repo
-3. Render creates the database + simulator + dashboard automatically (Singapore region)
-
-The `Dockerfile.simulator` and `Dockerfile.dashboard` are production-ready with SSL support for Render's managed PostgreSQL.
 
 ---
 
