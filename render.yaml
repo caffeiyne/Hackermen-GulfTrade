@@ -1,13 +1,13 @@
 # Render Blueprint — GulfTrade Intelligence
 # Usage: Go to render.com → New → Blueprint → select this repo
-# Render will create the DB + 2 web services automatically. One click.
+# Everything in Singapore region to match DB.
 
 databases:
-  # ── PostgreSQL Database ──────────────────────────────────────────────
   - name: gulftrade-db
     databaseName: gulftrade
     user: gulftrade_user
-    ipAllowList:            # allow all — fine for hackathon
+    region: singapore
+    ipAllowList:
       - source: 0.0.0.0/0
         description: anywhere
 
@@ -19,6 +19,7 @@ services:
     env: docker
     dockerfilePath: ./Dockerfile.simulator
     dockerContext: .
+    region: singapore
     plan: free
     healthCheckPath: /health
     envVars:
@@ -39,6 +40,7 @@ services:
     env: docker
     dockerfilePath: ./Dockerfile.dashboard
     dockerContext: .
+    region: singapore
     plan: free
     envVars:
       - key: DATABASE_URL
