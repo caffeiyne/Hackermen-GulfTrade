@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import os
 import random
+import ssl as ssl_module
 import uuid
 from datetime import date, timedelta
 
@@ -174,7 +175,12 @@ def generate_quantity(profile: dict, current_date: date, day_index: int) -> int:
 
 async def generate_and_insert_sales(db_url: str):
     """Generate 90 days of sales and insert into the database."""
-    conn = await asyncpg.connect(db_url)
+    ssl_ctx = None
+    if "sslmode=require" in db_url:
+        ssl_ctx = ssl_module.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl_module.CERT_NONE
+    conn = await asyncpg.connect(db_url, ssl=ssl_ctx)
 
     # Fetch SKU prices
     sku_prices = {}

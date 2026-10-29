@@ -11,6 +11,8 @@ Provides:
 import asyncio
 import json
 import logging
+import os
+import ssl as ssl_module
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -38,11 +40,17 @@ async def init_db_pool():
     """Initialize the asyncpg connection pool."""
     global _pool
     if _pool is None:
+        ssl_ctx = None
+        if "sslmode=require" in settings.database_url or "sslmode=require" in os.environ.get("DATABASE_URL", ""):
+            ssl_ctx = ssl_module.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl_module.CERT_NONE
         _pool = await asyncpg.create_pool(
             settings.database_url,
             min_size=2,
             max_size=10,
             command_timeout=30,
+            ssl=ssl_ctx,
         )
         logger.info("Database pool created")
 
