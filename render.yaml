@@ -5,7 +5,7 @@
 services:
 
   # ── PostgreSQL Database ──────────────────────────────────────────────
-  - type: psdb
+  - type: postgres
     name: gulftrade-db
     ipAllowList:            # allow all — fine for hackathon
       - source: 0.0.0.0/0
