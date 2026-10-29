@@ -1,8 +1,6 @@
 "use client";
 
-export const dynamic = "force-dynamic";
-
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { MapPin, Package, AlertCircle, ArrowRight } from "lucide-react";
@@ -20,7 +18,7 @@ const warehouseColors: Record<string, string> = {
   SHJ: "from-purple-400 to-purple-600",
 };
 
-export default function InventoryMapPage() {
+function InventoryMapPageInner() {
   const searchParams = useSearchParams();
   const queryWarehouse = searchParams.get("warehouse");
   const querySku = searchParams.get("sku");
@@ -233,5 +231,13 @@ export default function InventoryMapPage() {
         </div>
       </Card>
     </div>
+  );
+}
+
+export default function InventoryMapPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-buddy-muted">Loading...</div>}>
+      <InventoryMapPageInner />
+    </Suspense>
   );
 }

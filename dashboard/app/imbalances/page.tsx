@@ -1,8 +1,6 @@
 "use client";
 
-export const dynamic = "force-dynamic";
-
-import { useEffect, useState, useMemo } from "react";
+import { Suspense, useEffect, useState, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { AlertTriangle, AlertCircle, Info, Clock, ArrowRight } from "lucide-react";
@@ -26,7 +24,7 @@ const severityColors: Record<string, "danger" | "warning" | "info"> = {
   info: "info",
 };
 
-export default function ImbalancesPage() {
+function ImbalancesPageInner() {
   const searchParams = useSearchParams();
   const skuFilter = searchParams.get("sku");
 
@@ -212,5 +210,13 @@ export default function ImbalancesPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function ImbalancesPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-buddy-muted">Loading...</div>}>
+      <ImbalancesPageInner />
+    </Suspense>
   );
 }

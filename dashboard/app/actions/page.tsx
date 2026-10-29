@@ -1,8 +1,6 @@
 "use client";
 
-export const dynamic = "force-dynamic";
-
-import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { Suspense, useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, Check, X, DollarSign, TrendingUp, Loader2, AlertCircle, Truck, ExternalLink, Clock, Plus, Hand, RotateCcw, BarChart3, Edit3 } from "lucide-react";
@@ -13,7 +11,7 @@ import { api } from "@/lib/api";
 import { formatCurrency, formatNumber, cn } from "@/lib/utils";
 import type { Recommendation, ImpactAssessment, SKU, Warehouse, StockLevel } from "@/lib/types";
 
-export default function ActionsPage() {
+function ActionsPageInner() {
   const searchParams = useSearchParams();
   const skuFilter = searchParams.get("sku");
 
@@ -1217,5 +1215,13 @@ export default function ActionsPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function ActionsPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-buddy-muted">Loading...</div>}>
+      <ActionsPageInner />
+    </Suspense>
   );
 }
