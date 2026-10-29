@@ -5,14 +5,20 @@ import type { WSEvent } from "./types";
 
 // Resolve WebSocket URL:
 // 1. NEXT_PUBLIC_WS_URL env var (production / Railway) — checked first
-// 2. Derive from browser location on port 8000 (LAN dev)
-// 3. localhost fallback (SSR / local dev)
+// 2. If HTTPS (tunnel/cloud), try same host /ws/live — may fail gracefully
+// 3. Derive from browser location on port 8000 (LAN dev)
+// 4. localhost fallback (SSR / local dev)
 function getWsUrl(): string {
   if (process.env.NEXT_PUBLIC_WS_URL) {
     return process.env.NEXT_PUBLIC_WS_URL.replace(/\/$/, "");
   }
   if (typeof window !== "undefined") {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    // If HTTPS (cloudflare tunnel / production), use same host — no port
+    if (window.location.protocol === "https:") {
+      return `${proto}//${window.location.host}/ws/live`;
+    }
+    // LAN dev — same hostname on port 8000
     return `${proto}//${window.location.hostname}:8000/ws/live`;
   }
   return "ws://localhost:8000/ws/live";
@@ -43,6 +49,8 @@ export function useRealTime(options: UseRealTimeOptions = {}): UseRealTimeResult
   const [latestEvent, setLatestEvent] = useState<WSEvent | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<NodeJS.Timeout | null>(null);
+  const reconnectAttempts = useRef(0);
+  const maxReconnectAttempts = 5;
 
   const connect = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -53,6 +61,7 @@ export function useRealTime(options: UseRealTimeOptions = {}): UseRealTimeResult
 
       ws.onopen = () => {
         setIsConnected(true);
+        reconnectAttempts.current = 0;
         console.log("[WS] Connected to simulator");
       };
 
@@ -69,8 +78,13 @@ export function useRealTime(options: UseRealTimeOptions = {}): UseRealTimeResult
 
       ws.onclose = () => {
         setIsConnected(false);
-        console.log("[WS] Disconnected, reconnecting in 3s...");
-        reconnectTimer.current = setTimeout(connect, 3000);
+        if (reconnectAttempts.current < maxReconnectAttempts) {
+          reconnectAttempts.current++;
+          console.log(`[WS] Disconnected, reconnecting (${reconnectAttempts.current}/${maxReconnectAttempts})...`);
+          reconnectTimer.current = setTimeout(connect, 3000);
+        } else {
+          console.log("[WS] Max reconnection attempts reached — using REST polling only");
+        }
       };
 
       ws.onerror = (err) => {
@@ -79,7 +93,10 @@ export function useRealTime(options: UseRealTimeOptions = {}): UseRealTimeResult
       };
     } catch (err) {
       console.error("[WS] Connection failed:", err);
-      reconnectTimer.current = setTimeout(connect, 3000);
+      if (reconnectAttempts.current < maxReconnectAttempts) {
+        reconnectAttempts.current++;
+        reconnectTimer.current = setTimeout(connect, 3000);
+      }
     }
   }, [onEvent, maxEvents]);
 

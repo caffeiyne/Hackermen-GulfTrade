@@ -24,13 +24,18 @@ import {
 
 // Resolve backend URL:
 // 1. NEXT_PUBLIC_API_URL env var (production / Railway) — checked first
-// 2. Same hostname as frontend on port 8000 (LAN dev — judges open host IP)
-// 3. localhost fallback (SSR / local dev)
+// 2. If HTTPS (tunnel/cloud), use same origin — Next.js rewrites proxy to :8000
+// 3. Same hostname as frontend on port 8000 (LAN dev — judges open host IP)
+// 4. localhost fallback (SSR / local dev)
 function getApiBase(): string {
   if (process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "");
   }
   if (typeof window !== "undefined") {
+    // If HTTPS (cloudflare tunnel / production), use same origin
+    if (window.location.protocol === "https:") {
+      return "";  // same origin — Next.js rewrite handles it
+    }
     return `${window.location.protocol}//${window.location.hostname}:8000`;
   }
   return "http://localhost:8000";

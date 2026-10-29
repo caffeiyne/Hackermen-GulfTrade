@@ -48,12 +48,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — allow the Next.js dashboard
+# CORS — allow all origins for demo (LAN access from any IP)
 from fastapi.middleware.cors import CORSMiddleware
+
+# When credentials=True, we can't use "*" — so we reflect the Origin header
+_allowed_origins = settings.cors_origins
+_allow_all = "*" in _allowed_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=True,
+    allow_origins=_allowed_origins if not _allow_all else ["*"],
+    allow_credentials=False if _allow_all else True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
