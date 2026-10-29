@@ -20,7 +20,16 @@ COPY db/ /app/db/
 # Expose port — Railway sets $PORT, we pass it to uvicorn
 EXPOSE 8000
 
+# Install psql for applying schema files
+RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client && \
+    rm -rf /var/lib/apt/lists/*
+
 # Start command:
-# - If RUN_SEED=1, run generate_sales.py first (seeds 90 days of sales)
-# - Then start uvicorn on the port Railway assigns ($PORT or 8000)
-CMD sh -c "if [ \"$RUN_SEED\" = \"1\" ]; then python /app/db/generate_sales.py --db-url \"$DATABASE_URL\"; fi && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"
+# 1. Apply schema + seeds + disruptions (always — uses IF NOT EXISTS / ON CONFLICT)
+# 2. If RUN_SEED=1, generate 90 days of sales data
+# 3. Start uvicorn on the assigned port
+CMD sh -c "psql \"$DATABASE_URL\" -f /app/db/schema.sql && \
+           psql \"$DATABASE_URL\" -f /app/db/seeds.sql && \
+           psql \"$DATABASE_URL\" -f /app/db/disruptions.sql && \
+           if [ \"$RUN_SEED\" = \"1\" ]; then python /app/db/generate_sales.py --db-url \"$DATABASE_URL\"; fi && \
+           uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"
