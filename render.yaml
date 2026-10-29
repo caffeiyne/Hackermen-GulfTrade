@@ -1,15 +1,17 @@
 # Render Blueprint — GulfTrade Intelligence
 # Usage: Go to render.com → New → Blueprint → select this repo
-# Render will create all 3 services automatically. One click.
+# Render will create the DB + 2 web services automatically. One click.
 
-services:
-
+databases:
   # ── PostgreSQL Database ──────────────────────────────────────────────
-  - type: postgres
-    name: gulftrade-db
+  - name: gulftrade-db
+    databaseName: gulftrade
+    user: gulftrade_user
     ipAllowList:            # allow all — fine for hackathon
       - source: 0.0.0.0/0
         description: anywhere
+
+services:
 
   # ── FastAPI Simulator Backend ────────────────────────────────────────
   - type: web
