@@ -1,0 +1,26 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install system dependencies for asyncpg
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libpq-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install
+COPY simulator/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy simulator application code
+COPY simulator/ .
+
+# Copy database scripts (schema, seeds, disruptions, generate_sales.py)
+COPY db/ /app/db/
+
+# Expose port — Railway sets $PORT, we pass it to uvicorn
+EXPOSE 8000
+
+# Start command:
+# - If RUN_SEED=1, run generate_sales.py first (seeds 90 days of sales)
+# - Then start uvicorn on the port Railway assigns ($PORT or 8000)
+CMD sh -c "if [ \"$RUN_SEED\" = \"1\" ]; then python /app/db/generate_sales.py --db-url \"$DATABASE_URL\"; fi && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"

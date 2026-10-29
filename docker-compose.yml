@@ -72,12 +72,12 @@ services:
   dashboard:
     build:
       context: ./dashboard
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     container_name: tradling-dashboard
     restart: unless-stopped
-    environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
-      NEXT_PUBLIC_WS_URL: ws://localhost:8000/ws/live
+    # No NEXT_PUBLIC_API_URL / NEXT_PUBLIC_WS_URL set locally —
+    # the app auto-detects from window.location.hostname:8000
+    # so judges on the LAN can open http://<host-ip>:3000
     ports:
       - "3000:3000"
     depends_on:

@@ -3,7 +3,23 @@ Application configuration — loads from environment variables / .env file.
 """
 
 import os
+import json
 from pydantic_settings import BaseSettings
+
+
+def _parse_cors_origins() -> list[str]:
+    """Parse CORS_ORIGINS from env var. Accepts JSON list or comma-separated string."""
+    raw = os.environ.get("CORS_ORIGINS", "")
+    if not raw:
+        return ["*"]
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return parsed
+    except (json.JSONDecodeError, TypeError):
+        pass
+    # Fallback: treat as comma-separated string
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
 
 class Settings(BaseSettings):
@@ -25,3 +41,6 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+# Override cors_origins from env if set (handles both JSON list and comma-separated)
+if os.environ.get("CORS_ORIGINS"):
+    settings.cors_origins = _parse_cors_origins()

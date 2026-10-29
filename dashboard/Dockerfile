@@ -1,18 +1,19 @@
-FROM node:20-alpine
-
+FROM node:20-alpine AS deps
 WORKDIR /app
-
-# Copy package files
 COPY package.json package-lock.json* ./
+RUN npm ci --omit=dev || npm install
 
-# Install dependencies
-RUN npm install
-
-# Copy application code
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+RUN npm run build
 
-# Expose port
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
 EXPOSE 3000
-
-# Start dev server — binds to 0.0.0.0 so it's reachable on the LAN
-CMD ["npm", "run", "dev", "--", "--hostname", "0.0.0.0"]
+CMD ["node", "server.js"]

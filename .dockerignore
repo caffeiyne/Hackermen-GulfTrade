@@ -1,0 +1,10 @@
+node_modules
+.next
+.git
+.env
+.env.local
+README.md
+ANSWER_KEY.md
+SUPPORTING_NOTE.md
+PITCH_SCRIPT.md
+pgdata

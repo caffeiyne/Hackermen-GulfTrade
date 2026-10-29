@@ -3,11 +3,14 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { WSEvent } from "./types";
 
-// Auto-detect the WebSocket host at runtime.
-// Always derive from the browser's location so that when someone
-// opens the dashboard on another laptop via the host's LAN IP,
-// the WebSocket connects to that same host — not localhost.
+// Resolve WebSocket URL:
+// 1. NEXT_PUBLIC_WS_URL env var (production / Railway) — checked first
+// 2. Derive from browser location on port 8000 (LAN dev)
+// 3. localhost fallback (SSR / local dev)
 function getWsUrl(): string {
+  if (process.env.NEXT_PUBLIC_WS_URL) {
+    return process.env.NEXT_PUBLIC_WS_URL.replace(/\/$/, "");
+  }
   if (typeof window !== "undefined") {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     return `${proto}//${window.location.hostname}:8000/ws/live`;

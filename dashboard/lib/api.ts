@@ -22,15 +22,14 @@ import {
   AgentAnalysis,
 } from "./types";
 
-// Auto-detect the backend host at runtime.
-// If NEXT_PUBLIC_API_URL is set AND differs from localhost, use it.
-// Otherwise, use the same hostname as the frontend but on port 8000.
-// This lets judges open http://192.168.x.x:3000 and the API/WebSocket
-// automatically point to http://192.168.x.x:8000.
+// Resolve backend URL:
+// 1. NEXT_PUBLIC_API_URL env var (production / Railway) — checked first
+// 2. Same hostname as frontend on port 8000 (LAN dev — judges open host IP)
+// 3. localhost fallback (SSR / local dev)
 function getApiBase(): string {
-  // Always derive from the browser's location so that when someone
-  // opens the dashboard on another laptop via the host's LAN IP,
-  // API calls go to that same host — not localhost.
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "");
+  }
   if (typeof window !== "undefined") {
     return `${window.location.protocol}//${window.location.hostname}:8000`;
   }

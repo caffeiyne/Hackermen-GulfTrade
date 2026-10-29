@@ -1,0 +1,23 @@
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY dashboard/package.json dashboard/package-lock.json* ./
+RUN npm ci || npm install
+
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY dashboard/ .
+# Build with placeholder values — real values injected at runtime via entrypoint.sh
+RUN NEXT_PUBLIC_API_URL=__API_URL_PLACEHOLDER__ NEXT_PUBLIC_WS_URL=__WS_URL_PLACEHOLDER__ npm run build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+COPY dashboard/entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
+EXPOSE 3000
+ENTRYPOINT ["./entrypoint.sh"]
+CMD ["node", "server.js"]
